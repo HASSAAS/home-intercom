@@ -43,7 +43,7 @@
 })();
 </script>
 <script src="/static/i18n.js"></script>
-<link rel="stylesheet" href="/static/broadcast-dashboard-v4.css">
+<link rel="stylesheet" href="/static/broadcast-dashboard-v4.css?v=2.2.5">
 </head>
 <body>
 
@@ -173,7 +173,7 @@
     </section>
     <section class="presets-settings-section" aria-labelledby="presets-settings-heading">
       <div class="chime-heading"><h3 id="presets-settings-heading">预设文字管理</h3><p class="chime-desc">添加、编辑或删除快捷预设，保存后所有设备共享</p></div>
-      <label class="rooms-field"><span>选择预设</span><select id="preset-select" aria-label="预设播报文字"><option value="">选择要管理的预设</option></select></label>
+      <div id="preset-settings-list" class="preset-settings-list" aria-label="已有预设"></div><label class="rooms-field"><span>选择预设</span><select id="preset-select" aria-label="预设播报文字"><option value="">选择要管理的预设</option></select></label>
       <div class="preset-tools" id="preset-management" hidden>
         <button type="button" id="preset-add">添加预设文字</button>
         <button type="button" id="preset-edit" disabled>编辑</button>
@@ -1729,6 +1729,7 @@ function openSettingsPanel() {
   setRoomsMsg('');
 
   refreshChimeStatus();
+  loadTextPresets();
   loadMediaPlayers().then(() => {
     if (typeof window.renderRoomsSettings === 'function') window.renderRoomsSettings();
   });
@@ -2014,6 +2015,30 @@ function renderPresetButtons() {
       presetSelect.dispatchEvent(new Event('change'));
     });
     group.appendChild(button);
+  }
+  const settingsList = document.getElementById('preset-settings-list');
+  settingsList.replaceChildren();
+  for (const item of presetData.items) {
+    const entry = document.createElement('button');
+    entry.type = 'button';
+    entry.className = 'preset-settings-item';
+    entry.setAttribute('aria-pressed', String(presetSelect.value === item.id));
+    entry.disabled = presetBusy || !presetLoaded;
+    const title = document.createElement('strong');
+    title.textContent = item.name;
+    const preview = document.createElement('span');
+    preview.textContent = item.text;
+    entry.append(title, preview);
+    entry.addEventListener('click', () => {
+      presetSelect.value = item.id;
+      resetPresetDelete();
+      presetButtons();
+      if (presetData.can_manage) openPresetEditor(item);
+    });
+    settingsList.appendChild(entry);
+  }
+  if (presetLoaded && !presetData.items.length) {
+    settingsList.textContent = '暂无预设，点击“添加预设文字”创建。';
   }
   if (presetLoaded && !presetData.items.length) {
     const empty = document.createElement('span');

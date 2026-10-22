@@ -1,6 +1,6 @@
 # 家庭广播
 
-基于 [mdj2812/home-intercom](https://github.com/mdj2812/home-intercom) 的 Home Assistant 自定义集成，包含本地中文界面与文字播报扩展。本包版本对应集成清单 2.2.4；不是原作者的官方发行包。
+基于 [mdj2812/home-intercom](https://github.com/mdj2812/home-intercom) 的 Home Assistant 自定义集成，包含本地中文界面与文字播报扩展。本包版本对应集成清单 2.2.5；不是原作者的官方发行包。
 
 ## 功能
 

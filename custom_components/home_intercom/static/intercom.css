@@ -1619,3 +1619,12 @@ html[data-theme-pref="dark"] #theme-toggle-icon {
   border-color: var(--danger-btn-border-hover);
   background: var(--danger-btn-bg-hover);
 }
+
+/* Preset management inside Settings. */
+.presets-settings-section #preset-select { display:block!important; width:100%; margin:8px 0 12px; }
+.preset-settings-list { display:grid; gap:8px; margin:12px 0; }
+.preset-settings-item { display:flex; flex-direction:column; gap:5px; width:100%; padding:12px; text-align:left; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text-primary); cursor:pointer; font:inherit; }
+.preset-settings-item span { font-size:13px; color:var(--text-secondary); white-space:pre-wrap; overflow-wrap:anywhere; }
+.preset-settings-item[aria-pressed="true"] { border-color:var(--dash-accent,#ff8a00); }
+.preset-settings-item:disabled { opacity:.5; cursor:default; }
+.presets-settings-section .preset-editor textarea { width:100%; box-sizing:border-box; }

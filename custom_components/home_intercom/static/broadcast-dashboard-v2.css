@@ -1725,3 +1725,12 @@ body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Mi
 #text-broadcast-message { margin-top:16px; background:transparent; border-top:1px solid var(--border); border-radius:0; padding:12px 0 0; font-size:11px; line-height:1.8; }
 @media(max-width:760px) { .text-broadcast { padding:22px; } }
 @media(max-width:360px) { .text-broadcast { padding:17px; } .preset-buttons { gap:6px; } .preset-buttons button { font-size:12px; padding:9px 5px; } .text-broadcast-actions button { padding:11px 15px; } }
+
+/* Preset management inside Settings. */
+.presets-settings-section #preset-select { display:block!important; width:100%; margin:8px 0 12px; }
+.preset-settings-list { display:grid; gap:8px; margin:12px 0; }
+.preset-settings-item { display:flex; flex-direction:column; gap:5px; width:100%; padding:12px; text-align:left; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text-primary); cursor:pointer; font:inherit; }
+.preset-settings-item span { font-size:13px; color:var(--text-secondary); white-space:pre-wrap; overflow-wrap:anywhere; }
+.preset-settings-item[aria-pressed="true"] { border-color:var(--dash-accent,#ff8a00); }
+.preset-settings-item:disabled { opacity:.5; cursor:default; }
+.presets-settings-section .preset-editor textarea { width:100%; box-sizing:border-box; }
