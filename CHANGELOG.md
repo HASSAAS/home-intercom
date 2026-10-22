@@ -1,3 +1,9 @@
+## 2.2.2
+
+- 按钮固件同步源改为 HASSAAS/home-intercom。
+- 设置页显示新的固件仓库。
+- 固件仍需独立的 intercom-button-*.bin Release 附件。
+
 # 2.2.1 本地扩展打包版
 
 - 打包当前家庭广播集成与中文操作界面。

@@ -1,6 +1,6 @@
 # 家庭广播
 
-基于 [mdj2812/home-intercom](https://github.com/mdj2812/home-intercom) 的 Home Assistant 自定义集成，包含本地中文界面与文字播报扩展。本包版本对应集成清单 2.2.1；不是原作者的官方发行包。
+基于 [mdj2812/home-intercom](https://github.com/mdj2812/home-intercom) 的 Home Assistant 自定义集成，包含本地中文界面与文字播报扩展。本包版本对应集成清单 2.2.2；不是原作者的官方发行包。
 
 ## 功能
 
@@ -36,4 +36,4 @@
 
 ## 来源与许可
 
-保留原项目 MIT 许可，详见 `LICENSE`。配套按键固件仍从原项目 `mdj2812/intercom-button` 获取，不包含在本包内。集成清单中的原作者与上游问题地址保持原样；本地扩展的问题应提交到本包的发布仓库。
+保留原项目 MIT 许可，详见 `LICENSE`。按钮固件同步源为 `HASSAAS/home-intercom` 的最新 Release。需额外上传 `intercom-button-*.bin`（可附同名 `.sig`）；集成 ZIP 不能用于按钮 OTA。集成清单中的原作者与上游问题地址保持原样；本地扩展的问题应提交到本包的发布仓库。
