@@ -70,23 +70,9 @@
     <label class="field-label" >快捷预设</label>
     <div class="preset-toolbar">
       <div id="preset-buttons" class="preset-buttons" role="group" aria-label="快捷预设"></div>
-      <select id="preset-select" aria-label="预设播报文字" hidden style="display:none!important"><option value="">选择预设，填入播报内容</option></select>
-      <div class="preset-tools" id="preset-management" hidden>
-        <a href="/config/integrations/integration/home_intercom" target="_top">集成管理</a>
-        <button type="button" id="preset-add">新增</button>
-        <button type="button" id="preset-edit" disabled>编辑</button>
-        <button type="button" id="preset-delete" disabled>删除</button>
-      </div>
+
+
     </div>
-    <p id="preset-permission" class="preset-permission">预设由 HA 管理员维护</p>
-    <div id="preset-editor" class="preset-editor" hidden>
-      <label for="preset-name">预设名称</label>
-      <input id="preset-name" maxlength="30" placeholder="例如：吃饭提醒" autocomplete="off">
-      <label for="preset-text">预设内容</label>
-      <textarea id="preset-text" maxlength="500" rows="3" placeholder="输入预设播报内容"></textarea>
-      <div class="preset-tools"><button type="button" id="preset-save">保存预设</button><button type="button" id="preset-cancel">取消</button></div>
-    </div>
-    <p id="preset-message" role="status" aria-live="polite"></p>
     <label class="field-label" for="text-broadcast-input">播报内容</label>
     <textarea id="text-broadcast-input" maxlength="500" rows="3" placeholder="例如：晚饭准备好了，请大家来吃饭。" aria-label="播报内容"></textarea>
     <div class="text-broadcast-actions">
@@ -184,6 +170,24 @@
         <span data-i18n="roomsAdd">添加房间</span>
       </button>
       <p class="settings-msg" id="rooms-msg" aria-live="polite"></p>
+    </section>
+    <section class="presets-settings-section" aria-labelledby="presets-settings-heading">
+      <div class="chime-heading"><h3 id="presets-settings-heading">预设文字管理</h3><p class="chime-desc">添加、编辑或删除快捷预设，保存后所有设备共享</p></div>
+      <label class="rooms-field"><span>选择预设</span><select id="preset-select" aria-label="预设播报文字"><option value="">选择要管理的预设</option></select></label>
+      <div class="preset-tools" id="preset-management" hidden>
+        <button type="button" id="preset-add">添加预设文字</button>
+        <button type="button" id="preset-edit" disabled>编辑</button>
+        <button type="button" id="preset-delete" disabled>删除</button>
+      </div>
+    <p id="preset-permission" class="preset-permission">预设由 HA 管理员维护</p>
+    <div id="preset-editor" class="preset-editor" hidden>
+      <label for="preset-name">预设名称</label>
+      <input id="preset-name" maxlength="30" placeholder="例如：吃饭提醒" autocomplete="off">
+      <label for="preset-text">预设内容</label>
+      <textarea id="preset-text" maxlength="500" rows="3" placeholder="输入预设播报内容"></textarea>
+      <div class="preset-tools"><button type="button" id="preset-save">保存预设</button><button type="button" id="preset-cancel">取消</button></div>
+    </div>
+    <p id="preset-message" role="status" aria-live="polite"></p>
     </section>
     <section class="chime-section" aria-labelledby="chime-heading">
       <div class="chime-heading">
@@ -2020,8 +2024,8 @@ function renderPresetButtons() {
 function presetButtons() {
   renderPresetButtons();
   const canManage = presetData.can_manage === true;
-  document.getElementById('preset-management').hidden = true;
-  document.getElementById('preset-permission').hidden = true;
+  document.getElementById('preset-management').hidden = !canManage;
+  document.getElementById('preset-permission').hidden = canManage;
   if (!canManage) presetEditor.hidden = true;
   const selected = presetData.items.some(item => item.id === presetSelect.value);
   document.getElementById('preset-edit').disabled = !canManage || !selected || presetBusy;
@@ -2035,7 +2039,7 @@ function resetPresetDelete() {
   document.getElementById('preset-delete').textContent = '删除';
 }
 function renderPresets(selected = presetSelect.value) {
-  presetSelect.replaceChildren(new Option('选择预设，填入播报内容', ''));
+  presetSelect.replaceChildren(new Option('选择要管理的预设', ''));
   for (const item of presetData.items) presetSelect.add(new Option(item.name, item.id));
   if (presetData.items.some(item => item.id === selected)) presetSelect.value = selected;
   resetPresetDelete();
