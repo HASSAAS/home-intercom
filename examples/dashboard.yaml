@@ -1,0 +1,9 @@
+title: 家庭广播
+views:
+  - title: 家庭广播
+    path: intercom
+    panel: true
+    cards:
+      - type: iframe
+        url: /home-intercom
+        aspect_ratio: 100%

@@ -1,0 +1,2215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#0f0f0f">
+
+<title>home-intercom</title>
+<script>
+// Detect running context: container vs HA integration panel
+(function(){
+  var path = window.location.pathname;
+  var isHA = path.indexOf('/home-intercom') === 0 || path.indexOf('/home_intercom') === 0;
+  var panelBase = path.indexOf('/home-intercom') === 0 ? '/home-intercom' : '/home_intercom';
+  window.API_BASE = isHA ? '/api/home_intercom' : '';
+  window.STATIC_BASE = isHA ? panelBase + '/static' : '/static';
+  window.PANEL_BASE = isHA ? panelBase : '';
+})();
+</script>
+<script>
+// Set initial title + theme before CSS/i18n to avoid a flash of the wrong look
+(function(){
+  var lang = localStorage.getItem("intercom-lang") || "";
+  // Read HA user language from localStorage (same origin)
+  var haLang = localStorage.getItem("selectedLanguage") || "";
+  var isEn = lang === "en" || (!lang && (haLang.includes("en") || haLang.includes("en-")));
+  document.title = isEn ? "Home Intercom" : "家庭广播";
+
+  var pref = localStorage.getItem("intercom-theme") || "auto";
+  if (pref !== "light" && pref !== "dark") pref = "auto";
+  var dark = !window.matchMedia || window.matchMedia("(prefers-color-scheme: dark)").matches;
+  var theme = pref === "light" ? "light" : pref === "dark" ? "dark" : (dark ? "dark" : "light");
+  document.documentElement.setAttribute("data-theme", theme);
+  document.documentElement.setAttribute("data-theme-pref", pref);
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#f3f3f4" : "#0f0f0f");
+})();
+</script>
+<script src="/static/i18n.js"></script>
+<link rel="stylesheet" href="/static/broadcast-dashboard-v4.css">
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 10v4h4l6 4V6l-6 4H4Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M17 8a7 7 0 0 1 0 8m3-11a11 11 0 0 1 0 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+    <div>
+      <h1 id="app-title">家庭广播</h1>
+      <p class="hint" id="app-hint">按住录音 · 松开发送</p>
+    </div>
+  </div>
+
+  <div class="broadcast-workspace">
+  <section class="voice-panel" aria-labelledby="voice-panel-title">
+    <div class="panel-heading"><div><h2 id="voice-panel-title">语音广播</h2><p>选择房间，按住说话</p></div><span class="panel-tag">松开发送</span></div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section class="text-broadcast" aria-labelledby="text-broadcast-title">
+    <div class="text-broadcast-heading">
+      <div><h2 id="text-broadcast-title">文字播报</h2><p class="panel-subtitle">写下提醒，让小爱替你传达</p></div>
+      <span id="text-broadcast-count">0 / 500</span>
+    </div>
+    <label class="field-label" >快捷预设</label>
+    <div class="preset-toolbar">
+      <div id="preset-buttons" class="preset-buttons" role="group" aria-label="快捷预设"></div>
+      <select id="preset-select" aria-label="预设播报文字" hidden style="display:none!important"><option value="">选择预设，填入播报内容</option></select>
+      <div class="preset-tools" id="preset-management" hidden>
+        <a href="/config/integrations/integration/home_intercom" target="_top">集成管理</a>
+        <button type="button" id="preset-add">新增</button>
+        <button type="button" id="preset-edit" disabled>编辑</button>
+        <button type="button" id="preset-delete" disabled>删除</button>
+      </div>
+    </div>
+    <p id="preset-permission" class="preset-permission">预设由 HA 管理员维护</p>
+    <div id="preset-editor" class="preset-editor" hidden>
+      <label for="preset-name">预设名称</label>
+      <input id="preset-name" maxlength="30" placeholder="例如：吃饭提醒" autocomplete="off">
+      <label for="preset-text">预设内容</label>
+      <textarea id="preset-text" maxlength="500" rows="3" placeholder="输入预设播报内容"></textarea>
+      <div class="preset-tools"><button type="button" id="preset-save">保存预设</button><button type="button" id="preset-cancel">取消</button></div>
+    </div>
+    <p id="preset-message" role="status" aria-live="polite"></p>
+    <label class="field-label" for="text-broadcast-input">播报内容</label>
+    <textarea id="text-broadcast-input" maxlength="500" rows="3" placeholder="例如：晚饭准备好了，请大家来吃饭。" aria-label="播报内容"></textarea>
+    <div class="text-broadcast-actions">
+      <div class="target-field"><label class="field-label" for="text-broadcast-target">播报到</label>
+      <select id="text-broadcast-target" aria-label="选择播报音箱"><option value="all">全部音箱</option></select>
+      </div>
+      <button type="button" id="text-broadcast-send" disabled>播报文字</button>
+    </div>
+    <p id="text-broadcast-message" role="status" aria-live="polite">播放系统提示音后朗读 · 最多 500 字</p>
+  </section>
+  </div>
+
+  <div class="devices-section" id="devices-section" hidden>
+    <h2 class="devices-heading">
+      <button type="button" id="devices-toggle" class="devices-toggle" aria-expanded="false" aria-controls="devices-list">
+        <span class="devices-title" data-i18n="devicesTitle">对讲按钮</span>
+        <span class="devices-chevron" aria-hidden="true"></span>
+      </button>
+    </h2>
+    <div class="devices-list" id="devices-list" hidden></div>
+  </div>
+
+  <footer class="footer">
+    <span class="ver" id="ver">…</span>
+    <div class="footer-actions">
+      <button type="button" id="settings-toggle" class="settings-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-overlay">
+        <span aria-hidden="true">⚙</span>
+      </button>
+      <div class="theme-dropdown" id="theme-dropdown">
+      <button type="button" id="theme-toggle" class="theme-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="Theme">
+        <span id="theme-toggle-icon" aria-hidden="true"></span>
+      </button>
+      <div class="lang-dropdown-menu" role="listbox" hidden>
+        <button type="button" role="option" class="lang-option" data-theme-pref="auto" data-i18n="themeAuto">自动</button>
+        <button type="button" role="option" class="lang-option" data-theme-pref="light" data-i18n="themeLight">浅色</button>
+        <button type="button" role="option" class="lang-option" data-theme-pref="dark" data-i18n="themeDark">深色</button>
+      </div>
+      </div>
+      <div class="lang-dropdown" id="lang-dropdown">
+      <button type="button" id="lang-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="Language">
+        <span id="lang-toggle-label">中文</span>
+      </button>
+      <div class="lang-dropdown-menu" role="listbox" hidden>
+        <button type="button" role="option" class="lang-option" data-lang="zh-CN">中文</button>
+        <button type="button" role="option" class="lang-option" data-lang="en">EN</button>
+      </div>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<div class="settings-overlay" id="settings-overlay" hidden>
+  <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="settings-header">
+      <h2 id="settings-title" data-i18n="settingsTitle">Settings</h2>
+      <button type="button" id="settings-close" class="settings-close" aria-label="Close">×</button>
+    </div>
+    <section class="rooms-section" aria-labelledby="rooms-heading">
+      <div class="chime-heading">
+        <h3 id="rooms-heading" data-i18n="roomsTitle">房间</h3>
+        <p class="chime-desc" data-i18n="roomsDesc">对讲网格上的扬声器</p>
+      </div>
+      <p class="rooms-empty" id="rooms-empty" hidden data-i18n="roomsEmpty">还没有房间。添加一个扬声器开始使用。</p>
+      <div class="rooms-list" id="rooms-list"></div>
+      <form class="rooms-form" id="rooms-form" hidden>
+        <input type="hidden" id="room-edit-id" value="">
+        <label class="rooms-field">
+          <span data-i18n="roomsName">名称</span>
+          <input type="text" id="room-name" maxlength="64" required autocomplete="off">
+        </label>
+        <div class="rooms-field">
+          <span data-i18n="roomsIcon">图标</span>
+          <input type="hidden" id="room-icon" value="">
+          <div class="rooms-icon-picker" id="room-icon-picker" role="radiogroup" aria-label="图标"></div>
+        </div>
+        <label class="rooms-field">
+          <span data-i18n="roomsPlayer">扬声器</span>
+          <select id="room-player" required></select>
+        </label>
+        <label class="rooms-field">
+          <span data-i18n="roomsVolume">播报音量</span>
+          <input type="number" id="room-volume" min="0" max="100" step="1" inputmode="numeric">
+        </label>
+        <label class="rooms-field">
+          <span data-i18n="roomsPause">暂停缓冲（秒）</span>
+          <input type="number" id="room-pause" min="0" max="10" step="0.1" inputmode="decimal">
+        </label>
+        <div class="rooms-form-actions">
+          <button type="submit" id="rooms-save" class="device-action primary" data-i18n="roomsSave">保存</button>
+          <button type="button" id="rooms-cancel" class="device-action" data-i18n="roomsCancel">取消</button>
+        </div>
+      </form>
+      <button type="button" id="rooms-add" class="rooms-add-btn">
+        <span class="chime-replace-icon" aria-hidden="true">＋</span>
+        <span data-i18n="roomsAdd">添加房间</span>
+      </button>
+      <p class="settings-msg" id="rooms-msg" aria-live="polite"></p>
+    </section>
+    <section class="chime-section" aria-labelledby="chime-heading">
+      <div class="chime-heading">
+        <h3 id="chime-heading">提示音设置</h3>
+        <p class="chime-desc">选择广播前的提示音，管理员可设置全局默认值</p>
+      </div>
+      <div id="chime-library" class="chime-library" aria-label="提示音库"></div>
+      <p id="chime-library-status" class="chime-library-status" role="status"></p>
+      <button type="button" id="chime-library-save" class="device-action primary" hidden>设为默认提示音</button>
+      <div class="chime-card">
+        <button type="button" id="chime-play" class="chime-play-btn" aria-label="Preview">
+          <span class="chime-play-icon" aria-hidden="true">▶</span>
+        </button>
+        <div class="chime-card-info">
+          <div class="chime-filename" id="chime-filename">—</div>
+          <div class="chime-meta" id="chime-meta">—</div>
+          <canvas class="chime-waveform" id="chime-waveform" height="32" aria-hidden="true"></canvas>
+        </div>
+      </div>
+      <label class="chime-replace-card" id="chime-upload-control" hidden>
+        <span class="chime-replace-icon" aria-hidden="true">＋</span>
+        <span class="chime-replace-text">
+          <span data-i18n="chimeReplace">Replace chime</span>
+          <span class="chime-replace-hint" data-i18n="chimeReplaceHint">WAV / MP3 · up to 10 seconds</span>
+        </span>
+        <input type="file" id="chime-file" accept="audio/*" hidden>
+      </label>
+      <div class="chime-footer" id="chime-reset-control" hidden>
+        <button type="button" id="chime-reset" class="chime-reset-btn" data-i18n="chimeReset" disabled>Reset to default</button>
+      </div>
+    </section>
+    <p class="settings-msg" id="chime-msg" aria-live="polite"></p>
+    <section class="firmware-section" aria-labelledby="firmware-heading">
+      <div class="chime-heading">
+        <h3 id="firmware-heading" data-i18n="firmwareTitle">按钮固件</h3>
+        <p class="chime-desc" data-i18n="firmwareDesc">从 GitHub 缓存最新固件，供对讲按钮升级</p>
+      </div>
+      <div class="firmware-row">
+        <div class="firmware-status" id="firmware-status">—</div>
+        <button type="button" id="firmware-sync" class="settings-btn" data-i18n="firmwareSync">同步</button>
+      </div>
+      <p class="settings-msg" id="firmware-msg" aria-live="polite"></p>
+    </section>
+  </div>
+</div>
+
+<script>
+// --- Shared with ha_client.py EntityStatus / PlayError ---
+const EntityStatus = { ONLINE: "online", UNAVAILABLE: "unavailable", NO_PLAY_MEDIA: "no_play_media" };
+const PlayError   = { PLAY_FAILED: "play_failed", MA_FAILED: "ma_failed" };
+const UNAVAILABLE_CLASS = "unavailable";
+
+const GRID = document.getElementById('grid');
+const RECORD_URL = (window.API_BASE || '') + '/record';
+const CHIME_URL = (window.API_BASE || '') + '/chime';
+const MAX_CHIME_SECS = 10;
+// sessionStorage flag: auto-reload at most once per tab session on 401 (issue #54)
+const RELOAD_ONCE_KEY = 'hi401reload';
+
+// Build headers dict for HA API calls.
+// Priority: server-injected PWA token → HA localStorage token
+function authHeaders(extra) {
+  var h = extra || {};
+  // Server-injected shared secret (works everywhere: web, Companion App, etc.)
+  if (window._PWA_TOKEN) {
+    h['X-PWA-Token'] = window._PWA_TOKEN;
+    return h;
+  }
+  // Fallback: HA localStorage token (desktop/mobile web)
+  try {
+    var t = JSON.parse(localStorage.getItem('hassTokens') || 'null');
+    if (t && t.access_token) {
+      h['Authorization'] = 'Bearer ' + t.access_token;
+      return h;
+    }
+    t = JSON.parse(localStorage.getItem('hass_auth') || 'null');
+    if (t && t.access_token) {
+      h['Authorization'] = 'Bearer ' + t.access_token;
+      return h;
+    }
+    var raw = localStorage.getItem('access_token');
+    if (raw) {
+      h['Authorization'] = 'Bearer ' + raw;
+      return h;
+    }
+  } catch(e) {}
+  return h;
+}
+// PCM target rate fetched from /version on startup
+let TARGET_RATE = 16000;  // fallback, overwritten by server
+
+let mediaRecorder = null;
+let audioChunks = [];
+let currentTarget = '';
+let currentCard = null;
+let ROOM_NAMES = {};
+
+// Room icons (issue #85). Presets must match rooms.py ROOM_ICONS.
+const ROOM_ICON_DEFAULT = '🔊';
+const ROOM_ICON_PRESETS = ['🔊','🛋️','🛏️','📚','🎬','📺','🍽️','🚿','🚪','🌳','🎵','💻'];
+const ROOM_ICONS = {
+  all:     '📢',
+  living:  '🛋️',
+  bedroom: '🛏️',
+  study:   '📚',
+  cinema:  '🎬',
+};
+function roomIcon(target, room) {
+  if (target === 'all') return ROOM_ICONS.all;
+  const stored = room && typeof room.icon === 'string' ? room.icon.trim() : '';
+  if (ROOM_ICON_PRESETS.includes(stored)) return stored;
+  return ROOM_ICONS[target] || ROOM_ICON_DEFAULT;
+}
+
+function makeCard(target, name, isBroadcast, room) {
+  const card = document.createElement('div');
+  card.className = 'room-card' + (isBroadcast ? ' broadcast-card' : '');
+  card.id = 'card-' + target;
+
+  const pttHtml = `
+    <div class="ptt-wrap">
+      <div class="waves"></div>
+      <button class="ptt-btn">
+        <div class="ptt-icon" aria-hidden="true">
+          <span></span><span></span><span></span>
+          <span></span><span></span><span></span>
+          <span></span><span></span><span></span>
+        </div>
+        <div class="checkmark">✓</div>
+      </button>
+    </div>`;
+
+  if (isBroadcast) {
+    card.innerHTML = `
+      <div class="broadcast-main">
+        <div class="broadcast-info">
+          <div class="broadcast-label" data-i18n="broadcastAll">${name}</div>
+          <div class="status">${I18N.t('statusReady')}</div>
+        </div>
+        ${pttHtml}
+      </div>`;
+  } else {
+    card.innerHTML = `
+      <div class="room-header">
+        <div class="room-info">
+          <div class="room-name" data-room-name="${target}">${name}</div>
+          <div class="room-meta">
+            <span class="dot"></span>
+            <span class="device-name">…</span>
+          </div>
+        </div>
+        <span class="room-icon">${roomIcon(target, room)}</span>
+      </div>
+      ${pttHtml}
+      <div class="status">${I18N.t('statusReady')}</div>`;
+  }
+
+  const btn = card.querySelector('.ptt-btn');
+
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    btn.setPointerCapture(e.pointerId);
+    startRecording(target, card);
+  });
+  btn.addEventListener('pointerup', (e) => {
+    e.preventDefault();
+    stopRecording();
+  });
+  btn.addEventListener('lostpointercapture', () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') stopRecording();
+  });
+  btn.addEventListener('touchstart', e => e.preventDefault());
+  btn.addEventListener('contextmenu', e => e.preventDefault());
+
+  if (window._INSECURE_ORIGIN) {
+    btn.disabled = true;
+    card.classList.add(UNAVAILABLE_CLASS);
+    card.querySelector('.status').textContent = I18N.t('secInsecureTitle');
+  }
+
+  return card;
+}
+
+// Preview-only mock data (used only before first successful HA status load)
+const PREVIEW_DEVICE_NAMES = {
+  living: 'Living Room Speaker',
+  bedroom: 'Bedroom Speaker',
+};
+
+const PREVIEW_DEMO_STATUS = {
+  living: { status: EntityStatus.ONLINE, friendly_name: 'Living Room Speaker' },
+  bedroom: { status: EntityStatus.UNAVAILABLE, friendly_name: 'Bedroom Speaker' },
+};
+
+let haStatusLoaded = false;
+
+function applyPreviewFallback() {
+  for (const [key, friendly_name] of Object.entries(PREVIEW_DEVICE_NAMES)) {
+    const card = document.getElementById('card-' + key);
+    const deviceEl = card?.querySelector('.device-name');
+    if (deviceEl) deviceEl.textContent = friendly_name;
+  }
+  applyRoomStatus(PREVIEW_DEMO_STATUS);
+}
+
+function applyRoomStatus(status) {
+  for (const [key, info] of Object.entries(status)) {
+    const card = document.getElementById('card-' + key);
+    if (!card) continue;
+    const roomState = typeof info === 'object' ? info.status : info;
+    const deviceEl = card.querySelector('.device-name');
+    if (deviceEl && typeof info === 'object' && info.friendly_name) {
+      deviceEl.textContent = info.friendly_name;
+    }
+    const dot = card.querySelector('.dot');
+    const btn = card.querySelector('.ptt-btn');
+    if (roomState === EntityStatus.ONLINE) {
+      if (dot) dot.className = 'dot dot-online';
+      if (!window._INSECURE_ORIGIN) {
+        card.classList.remove(UNAVAILABLE_CLASS);
+        if (btn) btn.disabled = false;
+        const st = card.querySelector('.status');
+        if (st) st.textContent = I18N.t('statusReady');
+      }
+    } else if (roomState === EntityStatus.NO_PLAY_MEDIA) {
+      if (dot) dot.className = 'dot dot-error';
+      if (!window._INSECURE_ORIGIN) {
+        card.classList.add(UNAVAILABLE_CLASS);
+        if (btn) btn.disabled = true;
+        const st = card.querySelector('.status');
+        if (st) st.textContent = I18N.t('statusSkipped');
+      }
+    } else {
+      if (dot) dot.className = 'dot dot-error';
+      if (!window._INSECURE_ORIGIN) {
+        card.classList.add(UNAVAILABLE_CLASS);
+        if (btn) btn.disabled = true;
+        const st = card.querySelector('.status');
+        if (st) st.textContent = I18N.t('statusUnavailable');
+      }
+    }
+  }
+}
+
+function roomEntity(room) {
+  return (room && (room.entity_id || room.entity)) || '';
+}
+
+function catalogRooms() {
+  const rooms = {};
+  for (const [key, room] of Object.entries(window._ROOM_DATA || {})) {
+    if (key === 'all') continue;
+    rooms[key] = room;
+  }
+  return rooms;
+}
+
+function rebuildRoomGrid(rooms) {
+  window._ROOM_DATA = {};
+  ROOM_NAMES = {};
+  GRID.innerHTML = '';
+  window._ROOM_DATA.all = { name: I18N.t('broadcastAll'), name_en: 'All' };
+  ROOM_NAMES.all = I18N.t('broadcastAll');
+  GRID.appendChild(makeCard('all', I18N.t('broadcastAll'), true));
+
+  if (rooms && typeof rooms === 'object' && !Array.isArray(rooms)) {
+    for (const [key, room] of Object.entries(rooms)) {
+      window._ROOM_DATA[key] = room;
+      ROOM_NAMES[key] = room.name;
+      GRID.appendChild(makeCard(key, room.name, false, room));
+    }
+  }
+  if (typeof window.renderRoomsSettings === 'function') window.renderRoomsSettings();
+  if (typeof window.renderDevices === 'function' && window._DEVICES) window.renderDevices();
+  updateTextBroadcastTargets();
+}
+
+async function loadRooms() {
+  try {
+    const resp = await fetch((window.API_BASE || '') + '/rooms', { credentials: 'same-origin', headers: authHeaders() });
+    const rooms = await resp.json();
+    rebuildRoomGrid(rooms);
+  } catch (e) {
+    rebuildRoomGrid({});
+    const firstStatus = GRID.querySelector('.status');
+    if (firstStatus) firstStatus.textContent = I18N.t('statusLoadFailed');
+  }
+}
+
+function setCardState(card, state, msg) {
+  ['recording','sending','sent'].forEach(c => card.classList.remove(c));
+  if (state) card.classList.add(state);
+  card.querySelector('.status').textContent = msg;
+}
+
+// ——— Device list + pending approval (issues #52, #51) ———
+// window._DEVICES caches the last fetch so language switches re-render instantly.
+window._DEVICES = null;
+
+window.renderDevices = function () {
+  const section = document.getElementById('devices-section');
+  const list = document.getElementById('devices-list');
+  const devices = window._DEVICES;
+  if (!devices || !Object.keys(devices).length) {
+    section.hidden = true;
+    return;
+  }
+  const macs = Object.keys(devices).sort((a, b) => {
+    const na = devices[a].name || a;
+    const nb = devices[b].name || b;
+    const byName = na.localeCompare(nb);
+    return byName || a.localeCompare(b);
+  });
+  list.innerHTML = '';
+  let anyPending = false;
+  for (const mac of macs) {
+    const d = devices[mac];
+    const pending = !!d.pending;
+    const revoked = !!d.revoked;
+    const online = !revoked && !pending && deviceIsOnline(d.last_seen);
+    if (pending) anyPending = true;
+
+    const card = el('article',
+      'device-card' + (pending ? ' pending' : '') + (revoked ? ' revoked' : '') + (online ? ' online' : ''));
+
+    const top = el('div', 'device-card-top');
+    const identity = el('div', 'device-card-identity');
+    const title = el('div', 'device-card-title');
+    const dotState = online ? ' on' : pending ? ' wait' : ' off';
+    title.appendChild(el('span', 'device-card-dot' + dotState));
+    title.appendChild(el('span', 'device-card-name', d.name || mac));
+    identity.appendChild(title);
+    identity.appendChild(el('div', 'device-card-mac', mac));
+
+    const badges = el('div', 'device-card-badges');
+    if (pending) badges.appendChild(el('span', 'device-badge pending', I18N.t('devicePending')));
+    if (revoked) badges.appendChild(el('span', 'device-badge revoked', I18N.t('deviceRevoked')));
+    if (!pending && !revoked) {
+      badges.appendChild(el('span', 'device-badge ' + (online ? 'online' : 'offline'),
+        I18N.t(online ? 'deviceOnline' : 'deviceOffline')));
+      if (d.firmware_update_available) {
+        badges.appendChild(el('span', 'device-badge update', I18N.t('deviceUpdateAvailable')));
+      }
+    }
+    top.appendChild(identity);
+    top.appendChild(badges);
+
+    const meta = [];
+    if (d.room && ROOM_NAMES[d.room]) meta.push(ROOM_NAMES[d.room]);
+    const fw = d.firmware_version || '';
+    const latestFw = d.firmware_latest || '';
+    if (fw && latestFw && d.firmware_update_available) meta.push(fw + ' → ' + latestFw);
+    else if (fw) meta.push(fw);
+    meta.push(formatDeviceSeen(d.last_seen));
+
+    const actions = el('div', 'device-card-actions');
+    actions.appendChild(deviceActionButton(
+      I18N.t(pending ? 'deviceApprove' : 'deviceDeapprove'),
+      pending ? 'primary' : '',
+      () => manageDevice(mac, pending ? 'approve' : 'deapprove', card)
+    ));
+    actions.appendChild(deviceActionButton(
+      I18N.t(revoked ? 'deviceUnrevoke' : 'deviceRevoke'),
+      revoked ? 'primary' : '',
+      () => manageDevice(mac, revoked ? 'unrevoke' : 'revoke', card)
+    ));
+    const needsUpdate = !!d.firmware_update_available;
+    const upToDate = !!(d.firmware_latest && !needsUpdate);
+    const updateBtn = deviceActionButton(
+      I18N.t('deviceUpdate'),
+      needsUpdate && online ? 'primary' : '',
+      () => {
+        if (!confirm(I18N.t('deviceUpdateConfirm'))) return;
+        manageDevice(mac, 'ota', card);
+      },
+      !online || !needsUpdate
+    );
+    if (upToDate && online) updateBtn.title = I18N.t('deviceUpToDate');
+    actions.appendChild(updateBtn);
+    actions.appendChild(deviceActionButton(I18N.t('deviceDelete'), 'danger', () => {
+      if (!confirm(I18N.t('deviceDeleteConfirm'))) return;
+      manageDevice(mac, 'delete', card);
+    }));
+
+    card.appendChild(top);
+    card.appendChild(el('div', 'device-card-meta', meta.join(' · ')));
+    card.appendChild(devicePinsBlock(mac, d));
+    card.appendChild(actions);
+    list.appendChild(card);
+  }
+  section.hidden = false;
+  if (anyPending) {
+    const toggle = document.getElementById('devices-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', 'true');
+    list.hidden = false;
+  }
+};
+
+function el(tag, className, text) {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  if (text != null && text !== '') n.textContent = text;
+  return n;
+}
+
+function deviceActionButton(label, extraClass, onClick, disabled) {
+  const btn = el('button', 'device-action' + (extraClass ? ' ' + extraClass : ''), label);
+  btn.type = 'button';
+  btn.draggable = false;
+  if (disabled) {
+    btn.disabled = true;
+  }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
+
+function deviceGpioList(device) {
+  const pins = Array.isArray(device.pins) ? device.pins : [];
+  const buttons = (device.buttons && typeof device.buttons === 'object') ? device.buttons : {};
+  const set = new Set();
+  pins.forEach((p) => set.add(String(p)));
+  Object.keys(buttons).forEach((k) => set.add(String(k)));
+  return [...set].sort((a, b) => Number(a) - Number(b));
+}
+
+function devicePinsBlock(mac, device) {
+  const wrap = el('div', 'device-pins');
+  wrap.appendChild(el('div', 'device-pins-title', I18N.t('devicePinsTitle')));
+  const gpios = deviceGpioList(device);
+  if (!gpios.length) {
+    wrap.appendChild(el('div', 'device-pins-pending', I18N.t('devicePinsPending')));
+    return wrap;
+  }
+  const rooms = catalogRooms();
+  const assigned = (device.buttons && typeof device.buttons === 'object') ? device.buttons : {};
+  gpios.forEach((gpio) => {
+    const row = el('div', 'device-pin-row');
+    row.appendChild(el('span', 'device-pin-gpio', I18N.t('devicePinGpio').replace('%s', gpio)));
+    const select = document.createElement('select');
+    select.dataset.gpio = gpio;
+    const unset = document.createElement('option');
+    unset.value = '';
+    unset.textContent = I18N.t('devicePinUnassigned');
+    select.appendChild(unset);
+    const current = assigned[gpio] || '';
+    Object.keys(rooms).forEach((key) => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = rooms[key].name || key;
+      select.appendChild(opt);
+    });
+    if (current && !rooms[current]) {
+      const missing = document.createElement('option');
+      missing.value = current;
+      missing.disabled = true;
+      missing.selected = true;
+      missing.textContent = playerMissingLabel(current);
+      select.appendChild(missing);
+    } else {
+      select.value = current;
+    }
+    select.addEventListener('change', () => saveDeviceButtons(mac, wrap.closest('.device-card')));
+    row.appendChild(select);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function saveDeviceButtons(mac, card) {
+  if (!card) return;
+  const buttons = {};
+  card.querySelectorAll('select[data-gpio]').forEach((sel) => {
+    const room = sel.value.trim();
+    if (room) buttons[sel.dataset.gpio] = room;
+  });
+  manageDevice(mac, 'buttons', card, { buttons });
+}
+
+function deviceIsOnline(lastSeen) {
+  const t = Date.parse(lastSeen || '');
+  return !Number.isNaN(t) && (Date.now() - t) <= 30 * 1000;
+}
+
+function refreshDevicesIfVisible() {
+  if (document.visibilityState === 'hidden') return;
+  loadDevices();
+}
+
+function formatDeviceSeen(lastSeen) {
+  const t = Date.parse(lastSeen || '');
+  if (Number.isNaN(t)) return I18N.t('deviceNeverSeen');
+  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (sec < 45) return I18N.t('deviceJustNow');
+  if (sec < 3600) return I18N.t('deviceMinutesAgo').replace('%s', String(Math.max(1, Math.floor(sec / 60))));
+  if (sec < 86400) return I18N.t('deviceHoursAgo').replace('%s', String(Math.max(1, Math.floor(sec / 3600))));
+  return String(lastSeen).replace('T', ' ').slice(0, 16);
+}
+
+async function manageDevice(mac, action, card, extra) {
+  if (card) card.classList.add('busy');
+  try {
+    const resp = await fetch((window.API_BASE || '') + '/devices/manage', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ mac, action, ...(extra || {}) }),
+    });
+    if (resp.ok) await loadDevices();
+  } catch (e) { /* ignore */ }
+  if (card) card.classList.remove('busy');
+}
+
+function initDevicesToggle() {
+  const toggle = document.getElementById('devices-toggle');
+  const list = document.getElementById('devices-list');
+  if (!toggle || !list || toggle.dataset.bound) return;
+  toggle.dataset.bound = '1';
+  toggle.addEventListener('click', () => {
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    list.hidden = !open;
+  });
+}
+
+async function loadDevices() {
+  try {
+    const resp = await fetch((window.API_BASE || '') + '/devices', {
+      credentials: 'same-origin',
+      headers: authHeaders(),
+    });
+    if (!resp.ok) return; // 401/404: stay hidden
+    window._DEVICES = await resp.json();
+    window.renderDevices();
+  } catch (e) { /* network error: stay hidden */ }
+}
+
+async function startRecording(target, card) {
+  currentTarget = target;
+  currentCard = card;
+  audioChunks = [];
+
+  if (card.classList.contains(UNAVAILABLE_CLASS)) return;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = () => {
+      mediaRecorder.stream.getTracks().forEach(t => t.stop());
+      mediaRecorder = null;
+      processAndSend();
+    };
+    mediaRecorder.start();
+    setCardState(card, 'recording', I18N.t('statusRecording'));
+  } catch (e) {
+    setCardState(card, '', I18N.t('micError') + e.message);
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    setCardState(currentCard, 'sending', I18N.t('statusSending'));
+  }
+}
+
+async function decodeAndResampleToInt16(arrayBuffer, maxDurationSecs) {
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  const audioBuf = await actx.decodeAudioData(arrayBuffer.slice(0));
+  const srcRate = audioBuf.sampleRate;
+  const srcData = audioBuf.getChannelData(0);
+  actx.close();
+
+  const duration = srcData.length / srcRate;
+  if (maxDurationSecs && duration > maxDurationSecs) {
+    throw new Error('too_long');
+  }
+
+  const offlineCtx = new OfflineAudioContext(1, Math.ceil(duration * TARGET_RATE), TARGET_RATE);
+  const bufferSrc = offlineCtx.createBufferSource();
+  const offlineBuf = offlineCtx.createBuffer(1, srcData.length, srcRate);
+  offlineBuf.copyToChannel(srcData, 0);
+  bufferSrc.buffer = offlineBuf;
+  bufferSrc.connect(offlineCtx.destination);
+  bufferSrc.start(0);
+
+  const rendered = await offlineCtx.startRendering();
+  const resampled = rendered.getChannelData(0);
+  const pcm = new Int16Array(resampled.length);
+  for (let i = 0; i < resampled.length; i++) {
+    const s = Math.max(-1, Math.min(1, resampled[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return pcm;
+}
+
+function encodeWav(int16, sampleRate) {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const dataSize = int16.length * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  function writeStr(offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < int16.length; i++, offset += 2) {
+    view.setInt16(offset, int16[i], true);
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+async function processAndSend() {
+  const webm = new Blob(audioChunks, { type: 'audio/webm' });
+  let sentCurrent = true;
+
+  try {
+    const arrayBuf = await webm.arrayBuffer();
+    const pcm = await decodeAndResampleToInt16(arrayBuf);
+
+    const resp = await fetch(RECORD_URL + '?target=' + currentTarget + '&rate=' + TARGET_RATE, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: authHeaders(),
+      body: new Blob([new Uint8Array(pcm.buffer, 0, pcm.byteLength)]),
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      const errors = data.errors || [];
+      sentCurrent = true;  // show "sent" unless current card is an error card
+      if (errors.length > 0) {
+        // Map entity → room key for card lookup
+        const entityToKey = {};
+        for (const [key, room] of Object.entries(window._ROOM_DATA || {})) {
+          const entityId = roomEntity(room);
+          if (entityId) entityToKey[entityId] = key;
+        }
+        // Show error on each skipped room's card
+        for (const e of errors) {
+          const key = entityToKey[e.entity_id];
+          if (!key) continue;
+          const card = document.getElementById('card-' + key);
+          if (!card) continue;
+          if (card === currentCard) sentCurrent = false;
+          // Turn dot red
+          const dot = card.querySelector('.dot');
+          if (dot) dot.className = 'dot dot-error';
+          const ERROR_MSG = {
+            [EntityStatus.UNAVAILABLE]: I18N.t('statusUnavailable'),
+            [PlayError.PLAY_FAILED]:    I18N.t('statusPlayFailed'),
+            [PlayError.MA_FAILED]:      I18N.t('statusMAFailed'),
+          };
+          const msg = ERROR_MSG[e.error] || I18N.t('statusSkipped');
+          setCardState(card, '', msg);
+        }
+      }
+      if (sentCurrent) setCardState(currentCard, 'sent', I18N.t('statusSent'));
+    } else if (resp.status === 401 && !sessionStorage.getItem(RELOAD_ONCE_KEY)) {
+      // Issue #54: page holds a stale token (HA restarted, .storage reset,
+      // backup restored) — reload once to pick up the fresh injected token.
+      sessionStorage.setItem(RELOAD_ONCE_KEY, '1');
+      location.reload();
+      return;
+    } else {
+      setCardState(currentCard, '', I18N.t('statusFailed') + ' ' + resp.status);
+    }
+  } catch (e) {
+    setCardState(currentCard, '', I18N.t('statusNetworkError'));
+    console.error('processAndSend:', e);
+  }
+
+  setTimeout(() => {
+    if (currentCard && sentCurrent) setCardState(currentCard, '', I18N.t('statusReady'));
+  }, 1500);
+}
+
+async function pollSpeakerStatus() {
+  try {
+    const resp = await fetch((window.API_BASE || '') + '/rooms/status', { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error('status unavailable');
+    const status = await resp.json();
+    if (status.error) throw new Error(status.error);
+    applyRoomStatus(status);
+    haStatusLoaded = true;
+  } catch (e) {
+    if (!haStatusLoaded) applyPreviewFallback();
+  }
+}
+
+// --- Room catalog settings (issue #74) ---
+const ROOMS_URL = (window.API_BASE || '') + '/rooms';
+const MEDIA_PLAYERS_URL = (window.API_BASE || '') + '/media_players';
+window._MEDIA_PLAYERS = [];
+
+function setRoomsMsg(text) {
+  const node = document.getElementById('rooms-msg');
+  if (node) node.textContent = text || '';
+}
+
+function playerLabel(player) {
+  if (!player) return '';
+  const area = (player.area || '').trim();
+  const name = player.name || player.entity_id;
+  return area ? area + ' · ' + name : name;
+}
+
+function playerById(entityId) {
+  return (window._MEDIA_PLAYERS || []).find((p) => p.entity_id === entityId) || null;
+}
+
+function slugRoomId(entityId, existingKeys) {
+  let base = String(entityId || '').replace(/^media_player\./, '');
+  base = base.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^[^a-zA-Z0-9]+/, '').slice(0, 64);
+  if (!base) base = 'room';
+  let id = base;
+  let n = 2;
+  const taken = existingKeys || new Set();
+  while (taken.has(id) || id.toLowerCase() === 'all' || id.toLowerCase() === 'status') {
+    const suffix = '_' + n;
+    id = (base.slice(0, Math.max(1, 64 - suffix.length)) + suffix);
+    n += 1;
+  }
+  return id;
+}
+
+function optionalNumber(input, { integer } = {}) {
+  const raw = (input && input.value != null) ? String(input.value).trim() : '';
+  if (raw === '') return 0;
+  const n = integer ? parseInt(raw, 10) : parseFloat(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function playerMissingLabel(entityId) {
+  return I18N.t('roomsPlayerRemoved').replace('%s', entityId || '');
+}
+
+function fillPlayerSelect(selected) {
+  const select = document.getElementById('room-player');
+  if (!select) return;
+  const players = window._MEDIA_PLAYERS || [];
+  const missing = !!(selected && !players.some((p) => p.entity_id === selected));
+  select.innerHTML = '';
+  select.classList.toggle('rooms-player-missing', missing);
+  if (!players.length && !missing) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = I18N.t('roomsNoPlayers');
+    select.appendChild(opt);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = !players.length;
+  const groups = new Map();
+  const ungrouped = [];
+  for (const player of players) {
+    const area = (player.area || '').trim();
+    if (area) {
+      if (!groups.has(area)) groups.set(area, []);
+      groups.get(area).push(player);
+    } else {
+      ungrouped.push(player);
+    }
+  }
+  const addOption = (parent, player) => {
+    const opt = document.createElement('option');
+    opt.value = player.entity_id;
+    opt.textContent = player.name || player.entity_id;
+    parent.appendChild(opt);
+  };
+  for (const [area, list] of groups) {
+    const group = document.createElement('optgroup');
+    group.label = area;
+    list.forEach((p) => addOption(group, p));
+    select.appendChild(group);
+  }
+  ungrouped.forEach((p) => addOption(select, p));
+  if (missing) {
+    const opt = document.createElement('option');
+    opt.value = selected;
+    opt.disabled = true;
+    opt.selected = true;
+    opt.textContent = playerMissingLabel(selected);
+    select.appendChild(opt);
+  } else if (selected) {
+    select.value = selected;
+  }
+}
+
+async function loadMediaPlayers() {
+  try {
+    const resp = await fetch(MEDIA_PLAYERS_URL, {
+      credentials: 'same-origin',
+      headers: authHeaders(),
+    });
+    if (!resp.ok) {
+      window._MEDIA_PLAYERS = [];
+    } else {
+      const data = await resp.json();
+      window._MEDIA_PLAYERS = Array.isArray(data) ? data : [];
+    }
+  } catch (e) {
+    window._MEDIA_PLAYERS = [];
+  }
+  const editId = document.getElementById('room-edit-id');
+  const form = document.getElementById('rooms-form');
+  if (form && !form.hidden) {
+    fillPlayerSelect(document.getElementById('room-player').value);
+  } else if (editId) {
+    fillPlayerSelect(editId.value ? roomEntity((window._ROOM_DATA || {})[editId.value]) : '');
+  }
+}
+
+function roomsFormOpen() {
+  const form = document.getElementById('rooms-form');
+  return !!(form && !form.hidden);
+}
+
+// Pointer sortable. HTML5 DnD does not fire on iOS and is incomplete on Android.
+const REORDER_HOLD_MS = 200;
+const REORDER_MOVE_PX = 8;
+let _reorder = null;
+
+function reorderIgnoreTarget(target) {
+  return !!(target && target.closest && target.closest('button, select, input, a'));
+}
+
+function clearReorderTimer() {
+  if (_reorder && _reorder.timer) {
+    clearTimeout(_reorder.timer);
+    _reorder.timer = 0;
+  }
+}
+
+function unbindReorderWindow() {
+  window.removeEventListener('pointermove', onReorderPointerMove, true);
+  window.removeEventListener('pointerup', onReorderPointerUp, true);
+  window.removeEventListener('pointercancel', onReorderPointerUp, true);
+  window.removeEventListener('touchmove', onReorderTouchMove, true);
+}
+
+function bindReorderWindow() {
+  window.addEventListener('pointermove', onReorderPointerMove, true);
+  window.addEventListener('pointerup', onReorderPointerUp, true);
+  window.addEventListener('pointercancel', onReorderPointerUp, true);
+  window.addEventListener('touchmove', onReorderTouchMove, { capture: true, passive: false });
+}
+
+function bindRoomReorder(row) {
+  row.classList.add('rooms-row-sortable');
+  row.setAttribute('aria-label', I18N.t('roomsDrag'));
+  row.addEventListener('pointerdown', onReorderPointerDown);
+}
+
+function onReorderPointerDown(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (reorderIgnoreTarget(e.target)) return;
+  if (_reorder) endReorder(false);
+  _reorder = {
+    row: e.currentTarget,
+    pointerId: e.pointerId,
+    pointerType: e.pointerType,
+    startX: e.clientX,
+    startY: e.clientY,
+    dragging: false,
+    timer: 0,
+  };
+  bindReorderWindow();
+  if (e.pointerType !== 'mouse') {
+    _reorder.timer = setTimeout(beginReorder, REORDER_HOLD_MS);
+  }
+}
+
+function onReorderTouchMove(e) {
+  if (_reorder && _reorder.dragging) e.preventDefault();
+}
+
+function onReorderPointerMove(e) {
+  if (!_reorder || e.pointerId !== _reorder.pointerId) return;
+  const dist = Math.hypot(e.clientX - _reorder.startX, e.clientY - _reorder.startY);
+  if (_reorder.dragging) {
+    e.preventDefault();
+    reorderByClientY(e.clientY);
+    return;
+  }
+  if (dist < REORDER_MOVE_PX) return;
+  if (_reorder.pointerType === 'mouse') {
+    beginReorder();
+    reorderByClientY(e.clientY);
+    return;
+  }
+  endReorder(false);
+}
+
+function onReorderPointerUp(e) {
+  if (!_reorder || e.pointerId !== _reorder.pointerId) return;
+  endReorder(_reorder.dragging);
+}
+
+function beginReorder() {
+  if (!_reorder || _reorder.dragging) return;
+  clearReorderTimer();
+  _reorder.dragging = true;
+  _reorder.row.classList.add('dragging');
+  try { _reorder.row.setPointerCapture(_reorder.pointerId); } catch (err) { /* older WebKit */ }
+  if (_reorder.pointerType !== 'mouse' && navigator.vibrate) {
+    try { navigator.vibrate(12); } catch (err) { /* ignore */ }
+  }
+}
+
+function reorderByClientY(clientY) {
+  const row = _reorder && _reorder.row;
+  if (!row || !row.parentNode) return;
+  const rows = roomOrderRows();
+  let next = null;
+  for (const other of rows) {
+    if (other === row) continue;
+    const box = other.getBoundingClientRect();
+    if (clientY < box.top + box.height / 2) {
+      next = other;
+      break;
+    }
+  }
+  if (next) row.parentNode.insertBefore(row, next);
+  else row.parentNode.appendChild(row);
+}
+
+function endReorder(persist) {
+  if (!_reorder) return;
+  clearReorderTimer();
+  unbindReorderWindow();
+  const row = _reorder.row;
+  try { row.releasePointerCapture(_reorder.pointerId); } catch (err) { /* not captured */ }
+  row.classList.remove('dragging');
+  _reorder = null;
+  if (persist) persistRoomOrder();
+}
+
+function roomOrderRows() {
+  return [...document.querySelectorAll('#rooms-list .rooms-row')];
+}
+
+async function persistRoomOrder() {
+  const order = roomOrderRows().map((r) => r.dataset.roomId).filter(Boolean);
+  const current = Object.keys(catalogRooms());
+  if (order.length !== current.length || order.every((key, i) => key === current[i])) return;
+  try {
+    const resp = await fetch((window.API_BASE || '') + '/rooms/order', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ order }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) throw new Error(data.error || 'order');
+    const rooms = data.rooms && typeof data.rooms === 'object' ? data.rooms : {};
+    const all = window._ROOM_DATA && window._ROOM_DATA.all;
+    window._ROOM_DATA = all ? { all } : {};
+    ROOM_NAMES = { all: I18N.t('broadcastAll') };
+    for (const [key, room] of Object.entries(rooms)) {
+      window._ROOM_DATA[key] = room;
+      ROOM_NAMES[key] = room.name;
+    }
+    const cards = [...GRID.querySelectorAll('.room-card:not(.broadcast-card)')];
+    const byId = Object.fromEntries(cards.map((c) => [c.id.replace(/^card-/, ''), c]));
+    const keys = Object.keys(rooms);
+    if (keys.length === cards.length && keys.every((k) => byId[k])) {
+      for (const key of keys) GRID.appendChild(byId[key]);
+    } else {
+      rebuildRoomGrid(rooms);
+    }
+    if (typeof window.renderDevices === 'function' && window._DEVICES) window.renderDevices();
+  } catch (err) {
+    console.error('persistRoomOrder:', err);
+    setRoomsMsg(I18N.t('roomsSaveFail'));
+    await loadRooms();
+  }
+}
+
+window.renderRoomsSettings = function () {
+  const list = document.getElementById('rooms-list');
+  const empty = document.getElementById('rooms-empty');
+  const addBtn = document.getElementById('rooms-add');
+  const volumeEl = document.getElementById('room-volume');
+  const pauseEl = document.getElementById('room-pause');
+  if (volumeEl) volumeEl.placeholder = I18N.t('roomsVolumeHint');
+  if (pauseEl) pauseEl.placeholder = I18N.t('roomsPauseHint');
+  if (!list) return;
+  const rooms = catalogRooms();
+  const keys = Object.keys(rooms);
+  const formOpen = roomsFormOpen();
+  list.innerHTML = '';
+  if (empty) empty.hidden = formOpen || keys.length > 0;
+  if (addBtn) addBtn.hidden = formOpen;
+  if (formOpen) {
+    fillPlayerSelect(document.getElementById('room-player').value);
+    return;
+  }
+
+  for (const key of keys) {
+    const room = rooms[key];
+    const entityId = roomEntity(room);
+    const player = playerById(entityId);
+    const row = el('div', 'rooms-row');
+    row.dataset.roomId = key;
+    const info = el('div', 'rooms-row-info');
+    const nameWrap = el('div', 'rooms-row-name');
+    const glyph = el('span', 'rooms-row-icon', roomIcon(key, room));
+    glyph.setAttribute('aria-hidden', 'true');
+    nameWrap.appendChild(glyph);
+    nameWrap.appendChild(el('span', 'rooms-row-name-text', room.name || key));
+    info.appendChild(nameWrap);
+    const entityClass = player || !entityId ? 'rooms-row-entity' : 'rooms-row-entity rooms-row-entity-missing';
+    info.appendChild(el('div', entityClass, player ? playerLabel(player) : (entityId ? playerMissingLabel(entityId) : '')));
+    const actions = el('div', 'rooms-row-actions');
+    actions.appendChild(deviceActionButton(I18N.t('roomsEdit'), '', () => openRoomForm(key)));
+    actions.appendChild(deviceActionButton(I18N.t('roomsDelete'), 'danger', () => deleteRoom(key)));
+    row.appendChild(info);
+    row.appendChild(actions);
+    if (keys.length > 1) bindRoomReorder(row);
+    list.appendChild(row);
+  }
+};
+
+function fillIconPicker(selected) {
+  const picker = document.getElementById('room-icon-picker');
+  const input = document.getElementById('room-icon');
+  if (!picker || !input) return;
+  const icon = ROOM_ICON_PRESETS.includes(selected) ? selected : ROOM_ICON_DEFAULT;
+  input.value = icon;
+  picker.setAttribute('aria-label', I18N.t('roomsIcon'));
+  picker.replaceChildren();
+  for (const glyph of ROOM_ICON_PRESETS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'rooms-icon-opt' + (glyph === icon ? ' selected' : '');
+    btn.dataset.icon = glyph;
+    btn.textContent = glyph;
+    btn.draggable = false;
+    btn.setAttribute('role', 'radio');
+    btn.setAttribute('aria-checked', glyph === icon ? 'true' : 'false');
+    btn.setAttribute('aria-label', glyph);
+    btn.addEventListener('click', () => {
+      input.value = glyph;
+      picker.querySelectorAll('.rooms-icon-opt').forEach((el) => {
+        const on = el.dataset.icon === glyph;
+        el.classList.toggle('selected', on);
+        el.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+    });
+    picker.appendChild(btn);
+  }
+}
+
+function resetRoomFormState() {
+  const form = document.getElementById('rooms-form');
+  const editId = document.getElementById('room-edit-id');
+  const nameEl = document.getElementById('room-name');
+  const volumeEl = document.getElementById('room-volume');
+  const pauseEl = document.getElementById('room-pause');
+  const playerEl = document.getElementById('room-player');
+  if (form) form.hidden = true;
+  if (editId) editId.value = '';
+  if (nameEl) {
+    nameEl.value = '';
+    nameEl.dataset.fromPlayer = '0';
+  }
+  if (volumeEl) volumeEl.value = '';
+  if (pauseEl) pauseEl.value = '';
+  if (playerEl) playerEl.classList.remove('rooms-player-missing');
+  fillIconPicker(ROOM_ICON_DEFAULT);
+}
+
+function closeRoomForm() {
+  resetRoomFormState();
+  window.renderRoomsSettings();
+}
+
+function openRoomForm(roomId) {
+  const form = document.getElementById('rooms-form');
+  const editId = document.getElementById('room-edit-id');
+  const nameEl = document.getElementById('room-name');
+  const volumeEl = document.getElementById('room-volume');
+  const pauseEl = document.getElementById('room-pause');
+  const addBtn = document.getElementById('rooms-add');
+  const empty = document.getElementById('rooms-empty');
+  const list = document.getElementById('rooms-list');
+  if (!form || !nameEl) return;
+  setRoomsMsg('');
+  const room = roomId ? (window._ROOM_DATA || {})[roomId] : null;
+  editId.value = roomId || '';
+  nameEl.value = room ? (room.name || '') : '';
+  nameEl.dataset.fromPlayer = roomId ? '0' : '1';
+  volumeEl.value = room && room.announce_volume ? String(room.announce_volume) : '';
+  pauseEl.value = room && room.pause_buffer ? String(room.pause_buffer) : '';
+  fillPlayerSelect(room ? roomEntity(room) : '');
+  fillIconPicker(roomId ? roomIcon(roomId, room) : ROOM_ICON_DEFAULT);
+  if (!roomId) {
+    const select = document.getElementById('room-player');
+    const first = select && !select.disabled ? select.value : '';
+    const player = playerById(first);
+    if (player && !nameEl.value) nameEl.value = player.name || '';
+  }
+  form.hidden = false;
+  if (addBtn) addBtn.hidden = true;
+  if (empty) empty.hidden = true;
+  if (list) list.innerHTML = '';
+  nameEl.focus();
+}
+
+function roomsErrorMessage(error, status) {
+  if (status === 401) return I18N.t('roomsSaveFail');
+  if (error === 'no writable config entry') return I18N.t('roomsErrorNoEntry');
+  if (error === 'unknown room') return I18N.t('roomsErrorUnknown');
+  if (error === 'cannot persist rooms') return I18N.t('roomsSaveFail');
+  return error || I18N.t('roomsSaveFail');
+}
+
+async function saveRoom(e) {
+  e.preventDefault();
+  setRoomsMsg('');
+  const editId = document.getElementById('room-edit-id').value.trim();
+  const name = document.getElementById('room-name').value.trim();
+  const entityId = document.getElementById('room-player').value.trim();
+  if (!name || !entityId) {
+    setRoomsMsg(I18N.t('roomsSaveFail'));
+    return;
+  }
+  const existing = new Set(Object.keys(catalogRooms()));
+  const roomId = editId || slugRoomId(entityId, existing);
+  const body = {
+    name,
+    entity_id: entityId,
+    icon: document.getElementById('room-icon').value.trim() || ROOM_ICON_DEFAULT,
+    announce_volume: optionalNumber(document.getElementById('room-volume'), { integer: true }),
+    pause_buffer: optionalNumber(document.getElementById('room-pause')),
+  };
+  try {
+    const resp = await fetch(ROOMS_URL + '/' + encodeURIComponent(roomId), {
+      method: editId ? 'PATCH' : 'PUT',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (resp.status === 401 && !sessionStorage.getItem(RELOAD_ONCE_KEY)) {
+      sessionStorage.setItem(RELOAD_ONCE_KEY, '1');
+      location.reload();
+      return;
+    }
+    let data = {};
+    try { data = await resp.json(); } catch (err) { data = {}; }
+    if (!resp.ok) {
+      setRoomsMsg(roomsErrorMessage(data.error, resp.status));
+      return;
+    }
+    if (data.rooms && typeof data.rooms === 'object') rebuildRoomGrid(data.rooms);
+    else await loadRooms();
+    closeRoomForm();
+    setRoomsMsg(I18N.t('roomsSaved'));
+    pollSpeakerStatus();
+  } catch (err) {
+    setRoomsMsg(I18N.t('roomsSaveFail'));
+    console.error('saveRoom:', err);
+  }
+}
+
+async function deleteRoom(roomId) {
+  if (!confirm(I18N.t('roomsDeleteConfirm'))) return;
+  setRoomsMsg('');
+  try {
+    const resp = await fetch(ROOMS_URL + '/' + encodeURIComponent(roomId), {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: authHeaders(),
+    });
+    if (resp.status === 401 && !sessionStorage.getItem(RELOAD_ONCE_KEY)) {
+      sessionStorage.setItem(RELOAD_ONCE_KEY, '1');
+      location.reload();
+      return;
+    }
+    let data = {};
+    try { data = await resp.json(); } catch (err) { data = {}; }
+    if (!resp.ok) {
+      setRoomsMsg(roomsErrorMessage(data.error, resp.status));
+      return;
+    }
+    if (data.rooms && typeof data.rooms === 'object') rebuildRoomGrid(data.rooms);
+    else await loadRooms();
+    setRoomsMsg(I18N.t('roomsDeleted'));
+    pollSpeakerStatus();
+  } catch (err) {
+    setRoomsMsg(I18N.t('roomsSaveFail'));
+    console.error('deleteRoom:', err);
+  }
+}
+
+function initRoomsSettings() {
+  const addBtn = document.getElementById('rooms-add');
+  const form = document.getElementById('rooms-form');
+  const cancelBtn = document.getElementById('rooms-cancel');
+  const nameEl = document.getElementById('room-name');
+  const playerEl = document.getElementById('room-player');
+  if (!form || form.dataset.bound) return;
+  form.dataset.bound = '1';
+
+  addBtn?.addEventListener('click', () => {
+    loadMediaPlayers().then(() => openRoomForm(''));
+  });
+  cancelBtn?.addEventListener('click', () => {
+    setRoomsMsg('');
+    closeRoomForm();
+  });
+  form.addEventListener('submit', saveRoom);
+  playerEl?.addEventListener('change', () => {
+    if (document.getElementById('room-edit-id').value) return;
+    const player = playerById(playerEl.value);
+    if (player && (nameEl.dataset.fromPlayer === '1' || !nameEl.value.trim())) {
+      nameEl.value = player.name || '';
+      nameEl.dataset.fromPlayer = '1';
+    }
+  });
+  nameEl?.addEventListener('input', () => {
+    nameEl.dataset.fromPlayer = '0';
+  });
+}
+
+// --- Custom chime settings (issue #66) ---
+const CHIME_FILENAME_KEY = 'intercom-chime-display-name';
+let chimeState = { custom: false, url: '' };
+let chimePreviewAudio = null;
+let chimeMetaCache = null;
+let chimeMetaLoadId = 0;
+
+function resolveChimePlayUrl(url) {
+  const staticBase = (window.STATIC_BASE || '/static').replace(/\/$/, '');
+  if (!url) return staticBase + '/pre_announce.wav';
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.indexOf('/static/') !== -1) {
+    const file = url.split('/static/').pop().replace(/^\//, '');
+    return staticBase + '/' + file;
+  }
+  return url;
+}
+
+function setChimeMsg(text) {
+  const el = document.getElementById('chime-msg');
+  if (el) el.textContent = text || '';
+}
+
+function isChimeCustom(state) {
+  state = state || chimeState;
+  if (state.custom === true) return true;
+  if (state.custom === false) return false;
+  return /custom_chime\.wav/i.test(state.url || '');
+}
+
+function getChimeDisplayFilename() {
+  if (!isChimeCustom()) return I18N.t('chimeDefault');
+  return localStorage.getItem(CHIME_FILENAME_KEY) || 'custom_chime.wav';
+}
+
+function setChimeDisplayFilename(name) {
+  if (name) localStorage.setItem(CHIME_FILENAME_KEY, name);
+  else localStorage.removeItem(CHIME_FILENAME_KEY);
+}
+
+function formatChimeMeta(duration, sampleRate) {
+  if (!duration || !sampleRate) return '—';
+  const secs = duration < 10 ? duration.toFixed(1) : Math.round(duration).toString();
+  const rateKhz = Math.round(sampleRate / 1000);
+  return secs + ' s · ' + rateKhz + ' kHz ' + I18N.t('chimeMono');
+}
+
+function computeWaveformPeaks(audioBuffer, barCount) {
+  const data = audioBuffer.getChannelData(0);
+  const blockSize = Math.max(1, Math.floor(data.length / barCount));
+  const peaks = [];
+  for (let i = 0; i < barCount; i++) {
+    let peak = 0;
+    const start = i * blockSize;
+    for (let j = 0; j < blockSize; j++) {
+      peak = Math.max(peak, Math.abs(data[start + j] || 0));
+    }
+    peaks.push(peak);
+  }
+  return peaks;
+}
+
+function drawChimeWaveform(peaks) {
+  const canvas = document.getElementById('chime-waveform');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, rect.width);
+  const h = Math.max(1, rect.height);
+  canvas.width = Math.floor(w * dpr);
+  canvas.height = Math.floor(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  if (!peaks || !peaks.length) return;
+
+  const barW = w / peaks.length;
+  const gap = 1;
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#555';
+  for (let i = 0; i < peaks.length; i++) {
+    const barH = Math.max(2, peaks[i] * h * 0.9);
+    const x = i * barW + gap / 2;
+    const y = (h - barH) / 2;
+    ctx.fillRect(x, y, Math.max(1, barW - gap), barH);
+  }
+}
+
+function updateChimeMetaUI() {
+  const filenameEl = document.getElementById('chime-filename');
+  const metaEl = document.getElementById('chime-meta');
+  if (filenameEl) filenameEl.textContent = getChimeDisplayFilename();
+  if (metaEl) {
+    metaEl.textContent = chimeMetaCache
+      ? formatChimeMeta(chimeMetaCache.duration, chimeMetaCache.sampleRate)
+      : '—';
+  }
+  drawChimeWaveform(chimeMetaCache && chimeMetaCache.peaks);
+}
+
+async function loadChimeAudioMeta() {
+  const loadId = ++chimeMetaLoadId;
+  const src = resolveChimePlayUrl(chimeState.url);
+  try {
+    const resp = await fetch(src, { credentials: 'same-origin', cache: 'no-store' });
+    if (!resp.ok) throw new Error('fetch failed');
+    const arrayBuffer = await resp.arrayBuffer();
+    const actx = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuf = await actx.decodeAudioData(arrayBuffer.slice(0));
+    actx.close();
+    if (loadId !== chimeMetaLoadId) return;
+    chimeMetaCache = {
+      duration: audioBuf.duration,
+      sampleRate: audioBuf.sampleRate,
+      peaks: computeWaveformPeaks(audioBuf, 40),
+    };
+    updateChimeMetaUI();
+  } catch (e) {
+    if (loadId !== chimeMetaLoadId) return;
+    chimeMetaCache = null;
+    updateChimeMetaUI();
+    console.error('loadChimeAudioMeta:', e);
+  }
+}
+
+function setChimePlayButton(playing) {
+  const btn = document.getElementById('chime-play');
+  const icon = btn && btn.querySelector('.chime-play-icon');
+  if (!icon) return;
+  icon.textContent = playing ? '■' : '▶';
+  if (btn) {
+    btn.classList.toggle('playing', playing);
+    btn.setAttribute('aria-label', I18N.t('chimePreview'));
+  }
+}
+
+function updateChimeStatusUI() {
+  const custom = isChimeCustom();
+  const resetBtn = document.getElementById('chime-reset');
+  if (resetBtn) {
+    resetBtn.disabled = !custom;
+    if (custom) resetBtn.removeAttribute('disabled');
+    else resetBtn.setAttribute('disabled', '');
+  }
+  updateChimeMetaUI();
+  loadChimeAudioMeta();
+}
+
+async function refreshChimeStatus() {
+  try {
+    const resp = await fetch(CHIME_URL, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!resp.ok) return;
+    chimeState = await resp.json();
+    updateChimeStatusUI();
+    loadChimeLibrary();
+  } catch (e) {
+    console.error('refreshChimeStatus:', e);
+  }
+}
+
+function playChimePreview(audio) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      audio.removeEventListener('canplaythrough', onReady);
+      audio.removeEventListener('error', onError);
+    };
+    const onReady = () => {
+      cleanup();
+      audio.play().then(resolve).catch(reject);
+    };
+    const onError = () => {
+      cleanup();
+      reject(audio.error || new Error('audio error'));
+    };
+
+    if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      audio.play().then(resolve).catch(reject);
+      return;
+    }
+
+    audio.addEventListener('canplaythrough', onReady, { once: true });
+    audio.addEventListener('error', onError, { once: true });
+    audio.load();
+  });
+}
+
+async function previewChime() {
+  setChimeMsg('');
+  const src = resolveChimePlayUrl(chimeState.url);
+  if (chimePreviewAudio) {
+    chimePreviewAudio.pause();
+    chimePreviewAudio = null;
+    setChimePlayButton(false);
+  }
+  chimePreviewAudio = new Audio(src);
+  chimePreviewAudio.addEventListener('ended', () => {
+    setChimePlayButton(false);
+    chimePreviewAudio = null;
+  }, { once: true });
+  try {
+    setChimePlayButton(true);
+    await playChimePreview(chimePreviewAudio);
+  } catch (e) {
+    setChimePlayButton(false);
+    chimePreviewAudio = null;
+    setChimeMsg(I18N.t('chimePreviewFail'));
+    console.error('previewChime:', e);
+  }
+}
+
+async function uploadChimeFile(file) {
+  if (!file) return;
+  setChimeMsg('');
+  try {
+    const pcm = await decodeAndResampleToInt16(await file.arrayBuffer(), MAX_CHIME_SECS);
+    const wav = encodeWav(pcm, TARGET_RATE);
+    const resp = await fetch(CHIME_URL, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: presetAuthHeaders({ 'Content-Type': 'application/octet-stream' }),
+      body: wav,
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      chimeState = {
+        custom: true,
+        url: data.url || chimeState.url,
+        default_url: chimeState.default_url || ((window.STATIC_BASE || '/static') + '/pre_announce.wav'),
+      };
+      setChimeDisplayFilename(file.name);
+      updateChimeStatusUI();
+    loadChimeLibrary();
+      setChimeMsg(I18N.t('chimeUploadOk'));
+      return;
+    }
+    if (resp.status === 401 && !sessionStorage.getItem(RELOAD_ONCE_KEY)) {
+      sessionStorage.setItem(RELOAD_ONCE_KEY, '1');
+      location.reload();
+      return;
+    }
+    let err = I18N.t('chimeUploadFail');
+    try {
+      const data = await resp.json();
+      if (data.error) err = data.error;
+    } catch (e) {}
+    setChimeMsg(err);
+  } catch (e) {
+    if (e && e.message === 'too_long') {
+      setChimeMsg(I18N.t('chimeUploadTooLong'));
+    } else {
+      setChimeMsg(I18N.t('chimeUploadFail'));
+      console.error('uploadChimeFile:', e);
+    }
+  }
+}
+
+async function resetChime() {
+  setChimeMsg('');
+  try {
+    const resp = await fetch(CHIME_URL, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: presetAuthHeaders(),
+    });
+    if (resp.ok) {
+      chimeState = { custom: false, url: '' };
+      setChimeDisplayFilename('');
+      await refreshChimeStatus();
+      setChimeMsg(I18N.t('chimeResetOk'));
+      return;
+    }
+    if (resp.status === 401 && !sessionStorage.getItem(RELOAD_ONCE_KEY)) {
+      sessionStorage.setItem(RELOAD_ONCE_KEY, '1');
+      location.reload();
+      return;
+    }
+    setChimeMsg(I18N.t('chimeUploadFail'));
+  } catch (e) {
+    setChimeMsg(I18N.t('chimeUploadFail'));
+    console.error('resetChime:', e);
+  }
+}
+
+function setFirmwareMsg(text) {
+  const el = document.getElementById('firmware-msg');
+  if (el) el.textContent = text || '';
+}
+
+let firmwareCachedVersion = '';
+
+function firmwareStatusLabel(version) {
+  if (!version) return I18N.t('firmwareNone');
+  return I18N.t('firmwareCached').replace('%s', version);
+}
+
+window.renderFirmwareStatus = function () {
+  const el = document.getElementById('firmware-status');
+  if (el) el.textContent = firmwareStatusLabel(firmwareCachedVersion);
+};
+
+async function refreshFirmwareStatus() {
+  try {
+    const resp = await fetch((window.API_BASE || '') + '/firmware/status', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: authHeaders(),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json().catch(() => ({}));
+    firmwareCachedVersion = (data && data.version) || '';
+    window.renderFirmwareStatus();
+  } catch (e) { /* ignore */ }
+}
+
+async function syncFirmwareCache() {
+  const btn = document.getElementById('firmware-sync');
+  setFirmwareMsg(I18N.t('firmwareSyncing'));
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch((window.API_BASE || '') + '/firmware/sync', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: authHeaders(),
+    });
+    if (resp.status === 401 && !sessionStorage.getItem(RELOAD_ONCE_KEY)) {
+      sessionStorage.setItem(RELOAD_ONCE_KEY, '1');
+      location.reload();
+      return;
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      setFirmwareMsg(I18N.t('firmwareSyncFail'));
+      return;
+    }
+    firmwareCachedVersion = data.version || '';
+    window.renderFirmwareStatus();
+    setFirmwareMsg(I18N.t(data.updated ? 'firmwareUpdated' : 'firmwareLatest').replace('%s', firmwareCachedVersion));
+    if (typeof loadDevices === 'function') loadDevices();
+  } catch (e) {
+    setFirmwareMsg(I18N.t('firmwareSyncFail'));
+    console.error('syncFirmwareCache:', e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function initFirmwareSettings() {
+  const btn = document.getElementById('firmware-sync');
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = '1';
+  btn.addEventListener('click', syncFirmwareCache);
+}
+
+function openSettingsPanel() {
+  const overlay = document.getElementById('settings-overlay');
+  const toggle = document.getElementById('settings-toggle');
+  if (!overlay || !toggle) return;
+  if (typeof I18N.closeLangDropdown === 'function') I18N.closeLangDropdown();
+  if (typeof THEME !== 'undefined' && typeof THEME.closeDropdown === 'function') THEME.closeDropdown();
+  overlay.hidden = false;
+  toggle.setAttribute('aria-expanded', 'true');
+  setChimeMsg('');
+  setRoomsMsg('');
+  setFirmwareMsg('');
+  refreshChimeStatus();
+  refreshFirmwareStatus();
+  loadMediaPlayers().then(() => {
+    if (typeof window.renderRoomsSettings === 'function') window.renderRoomsSettings();
+  });
+}
+
+function closeSettingsPanel() {
+  const overlay = document.getElementById('settings-overlay');
+  const toggle = document.getElementById('settings-toggle');
+  if (overlay) overlay.hidden = true;
+  if (toggle) toggle.setAttribute('aria-expanded', 'false');
+  setRoomsMsg('');
+  closeRoomForm();
+  if (chimePreviewAudio) {
+    chimePreviewAudio.pause();
+    chimePreviewAudio = null;
+    setChimePlayButton(false);
+  }
+}
+
+function initChimeSettings() {
+  const toggle = document.getElementById('settings-toggle');
+  const overlay = document.getElementById('settings-overlay');
+  const closeBtn = document.getElementById('settings-close');
+  const playBtn = document.getElementById('chime-play');
+  const resetBtn = document.getElementById('chime-reset');
+  const fileInput = document.getElementById('chime-file');
+  if (!toggle || !overlay) return;
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (overlay.hidden) openSettingsPanel();
+    else closeSettingsPanel();
+  });
+
+  closeBtn?.addEventListener('click', closeSettingsPanel);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeSettingsPanel();
+  });
+  overlay.querySelector('.settings-panel')?.addEventListener('click', (e) => e.stopPropagation());
+
+  playBtn?.addEventListener('click', previewChime);
+  resetBtn?.addEventListener('click', resetChime);
+  fileInput?.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    uploadChimeFile(file);
+    e.target.value = '';
+  });
+
+  window.addEventListener('resize', () => {
+    drawChimeWaveform(chimeMetaCache && chimeMetaCache.peaks);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay && !overlay.hidden) closeSettingsPanel();
+  });
+
+  const closeLabel = I18N.t('settingsClose');
+  if (closeBtn) closeBtn.setAttribute('aria-label', closeLabel);
+  toggle.setAttribute('aria-label', I18N.t('settingsTitle'));
+  if (playBtn) playBtn.setAttribute('aria-label', I18N.t('chimePreview'));
+  updateChimeStatusUI();
+}
+
+window.updateChimeStatusUI = updateChimeStatusUI;
+
+// Detect insecure context (HTTP without localhost) — getUserMedia requires HTTPS
+(function checkSecureContext() {
+  if (!window.isSecureContext) {
+    window._INSECURE_ORIGIN = true;
+
+    var banner = document.createElement('div');
+    banner.className = 'insecure-banner';
+    banner.innerHTML =
+      '<div class="insecure-icon" aria-hidden="true">🔒</div>' +
+      '<div>' +
+        '<div class="insecure-title" data-i18n="secInsecureTitle">' + I18N.t('secInsecureTitle') + '</div>' +
+        '<div class="insecure-hint" data-i18n="secInsecureHint">' + I18N.t('secInsecureHint') + '</div>' +
+      '</div>';
+    var grid = document.getElementById('grid');
+    if (grid) grid.parentNode.insertBefore(banner, grid);
+  }
+})();
+
+loadRooms().then(() => { pollSpeakerStatus(); loadDevices(); });
+setInterval(pollSpeakerStatus, 30000);
+setInterval(refreshDevicesIfVisible, 10000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  loadDevices();
+  pollSpeakerStatus();
+});
+initDevicesToggle();
+initRoomsSettings();
+initChimeSettings();
+initFirmwareSettings();
+
+// Plain-text announcements use Xiaomi's read-text action, never command execution.
+async function readBroadcastResponse(response) {
+  if (response.status === 401) {
+    throw new Error('会话已失效，请刷新页面后重试');
+  }
+  if (response.status === 403) {
+    throw new Error('只有 HA 管理员可以管理预设，请以管理员身份登录');
+  }
+  const body = await response.text();
+  try {
+    return JSON.parse(body);
+  } catch (_) {
+    if ([502, 503, 504].includes(response.status)) {
+      throw new Error(`家庭广播服务暂时不可用（HTTP ${response.status}），请稍后重试。未保存内容已保留`);
+    }
+    if (response.status === 404) {
+      throw new Error('预设或播报接口尚未加载，请刷新页面后重试。未保存内容已保留');
+    }
+    throw new Error(`接口返回了网页，未能完成操作（HTTP ${response.status}）。请稍后重试，未保存内容已保留`);
+  }
+}
+function updateTextBroadcastTargets() {
+  const select = document.getElementById('text-broadcast-target');
+  const previous = select.value;
+  select.replaceChildren(new Option('全部音箱', 'all'));
+  for (const [key, room] of Object.entries(window._ROOM_DATA || {})) {
+    if (key !== 'all') select.add(new Option(room.name || key, key));
+  }
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+}
+const textInput = document.getElementById('text-broadcast-input');
+const textSend = document.getElementById('text-broadcast-send');
+const textMessage = document.getElementById('text-broadcast-message');
+let textBroadcastBusy = false;
+async function waitForTextBroadcast(jobId) {
+  const deadline = Date.now() + 150000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    let response;
+    try {
+      response = await fetch((window.API_BASE || '') + '/speak/' + encodeURIComponent(jobId), {
+        credentials: 'same-origin', headers: authHeaders(), cache: 'no-store', signal: AbortSignal.timeout(10000),
+      });
+    } catch (_) {
+      textMessage.textContent = '网络暂时中断，正在查询播报结果，请勿重复发送…';
+      continue;
+    }
+    if ([502, 503, 504].includes(response.status)) {
+      textMessage.textContent = '正在等待服务恢复并查询播报结果，请勿重复发送…';
+      continue;
+    }
+    const data = await readBroadcastResponse(response);
+    if (!response.ok) throw new Error(data.error || '播报结果查询失败');
+    if (data.status === 'done') return data.result;
+    textMessage.textContent = '音箱正在处理提示音和文字，请稍候…';
+  }
+  throw new Error('暂未取得播报结果，请先确认音箱是否已经播报，避免重复发送');
+}
+textInput.addEventListener('input', () => {
+  document.getElementById('text-broadcast-count').textContent = `${textInput.value.length} / 500`;
+  textSend.disabled = textBroadcastBusy || !textInput.value.trim();
+});
+textSend.addEventListener('click', async () => {
+  const text = textInput.value.trim();
+  if (!text || textBroadcastBusy) return;
+  textBroadcastBusy = true;
+  textSend.disabled = true;
+  textSend.textContent = '发送中…';
+  textMessage.textContent = '正在发送提示音和文字，请稍候…';
+  try {
+    const response = await fetch((window.API_BASE || '') + '/speak', {
+      method: 'POST', credentials: 'same-origin',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ text, target: document.getElementById('text-broadcast-target').value }),
+    });
+    if (response.status === 401) throw new Error('会话已失效，请刷新页面后重试');
+    if ([502, 503, 504].includes(response.status)) {
+      throw new Error('未收到服务确认，请先检查音箱是否已播报，避免重复发送。输入内容已保留');
+    }
+    let data = await readBroadcastResponse(response);
+    if (!response.ok) throw new Error(data.error || '播报请求失败');
+    if (response.status === 202 && data.job_id) data = await waitForTextBroadcast(data.job_id);
+    if (!data || (data.error && !data.results)) throw new Error(data && data.error || '播报执行失败');
+    const errors = (data.results || []).filter(result => !result.ok);
+    textMessage.textContent = `已发送至 ${data.rooms_sent || 0} / ${data.rooms_total || 0} 台音箱` +
+      (errors.length ? '；' + errors.map(result => `${result.name}：${result.error}`).join('；') : '，请留意音箱播报');
+  } catch (error) {
+    textMessage.textContent = error.message || '发送失败，请检查网络后重试';
+  } finally {
+    textBroadcastBusy = false;
+    textSend.textContent = '播报文字';
+    textSend.disabled = !textInput.value.trim();
+  }
+});
+
+// Shared default chime, with administrator-only mutations.
+let chimeLibraryData = { items: [], selected: '', can_manage: false };
+let chimeLibraryChoice = '';
+let chimeLibraryBusy = false;
+let libraryPreviewAudio;
+function renderChimeLibrary() {
+  const active = chimeLibraryData.items.find(item => item.id === chimeLibraryData.selected);
+  if (active) document.getElementById('chime-filename').textContent = active.name;
+  const container = document.getElementById('chime-library');
+  container.replaceChildren();
+  for (const item of chimeLibraryData.items) {
+    const row = document.createElement('div'); row.className = 'chime-library-row';
+    const choice = document.createElement('button'); choice.type = 'button'; choice.className = 'chime-library-choice';
+    choice.setAttribute('aria-pressed', String(chimeLibraryChoice === item.id));
+    const title = document.createElement('strong'); title.textContent = item.name + (item.id === chimeLibraryData.selected ? ' · 默认' : '');
+    const description = document.createElement('span'); description.textContent = item.description;
+    choice.append(title, description); choice.disabled = chimeLibraryBusy;
+    choice.addEventListener('click', () => { chimeLibraryChoice = item.id; renderChimeLibrary(); });
+    const preview = document.createElement('button'); preview.type = 'button'; preview.className = 'chime-library-preview'; preview.textContent = '试听';
+    preview.setAttribute('aria-label', '试听' + item.name);
+    preview.addEventListener('click', async () => {
+      if (libraryPreviewAudio) { libraryPreviewAudio.pause(); libraryPreviewAudio = null; }
+      libraryPreviewAudio = new Audio(item.url + '?v=' + Date.now());
+      try { await libraryPreviewAudio.play(); }
+      catch (_) { document.getElementById('chime-library-status').textContent = '试听失败，请稍后重试'; }
+    });
+    row.append(choice, preview); container.append(row);
+  }
+  const admin = chimeLibraryData.can_manage === true;
+  document.getElementById('chime-library-save').hidden = !admin;
+  document.getElementById('chime-library-save').disabled = chimeLibraryBusy || chimeLibraryChoice === chimeLibraryData.selected;
+  document.getElementById('chime-upload-control').hidden = !admin;
+  document.getElementById('chime-reset-control').hidden = !admin;
+}
+async function loadChimeLibrary() {
+  if (chimeLibraryBusy) return;
+  try {
+    const response = await fetch((window.API_BASE || '') + '/chime-library', { headers: presetAuthHeaders(), credentials: 'same-origin', cache: 'no-store' });
+    const data = await readBroadcastResponse(response);
+    if (!response.ok) throw new Error(data.error || '提示音库加载失败');
+    chimeLibraryData = data; chimeLibraryChoice = data.selected; renderChimeLibrary();
+    document.getElementById('chime-library-status').textContent = data.can_manage ? '选择提示音后，可设为所有广播的默认提示音。' : '可试听不同提示音；默认值由 HA 管理员设置。';
+  } catch (error) { document.getElementById('chime-library-status').textContent = error.message; }
+}
+document.getElementById('chime-library-save').addEventListener('click', async () => {
+  if (!chimeLibraryData.can_manage || chimeLibraryBusy) return;
+  chimeLibraryBusy = true; renderChimeLibrary();
+  const message = document.getElementById('chime-library-status'); message.textContent = '正在保存默认提示音…';
+  try {
+    const response = await fetch((window.API_BASE || '') + '/chime-library', {
+      method: 'POST', credentials: 'same-origin', headers: presetAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ id: chimeLibraryChoice }),
+    });
+    const data = await readBroadcastResponse(response);
+    if (!response.ok) throw new Error(data.error || '默认提示音保存失败');
+    chimeLibraryData = data; chimeLibraryChoice = data.selected;
+    await refreshChimeStatus();
+    message.textContent = '默认提示音已保存，录音和文字播报均使用此提示音。';
+  } catch (error) { message.textContent = error.message; }
+  finally { chimeLibraryBusy = false; renderChimeLibrary(); }
+});
+document.getElementById('settings-close').addEventListener('click', () => { if (libraryPreviewAudio) libraryPreviewAudio.pause(); });
+
+// Shared HA presets. Choosing a preset only fills the draft, never broadcasts it.
+const presetSelect = document.getElementById('preset-select');
+const presetEditor = document.getElementById('preset-editor');
+const presetMessage = document.getElementById('preset-message');
+let presetData = { revision: 0, items: [] };
+let presetEditingId = null;
+let presetEditorRevision = 0;
+let presetBusy = false;
+let presetLoaded = false;
+let presetDeleteId = '';
+let presetDeleteTimer;
+function presetAuthHeaders(extra) {
+  const headers = authHeaders(extra);
+  try {
+    const tokens = JSON.parse(localStorage.getItem('hassTokens') || 'null');
+    if (tokens && tokens.access_token) headers.Authorization = 'Bearer ' + tokens.access_token;
+  } catch (_) { /* No HA login: presets remain read-only. */ }
+  return headers;
+}
+function renderPresetButtons() {
+  const group = document.getElementById('preset-buttons');
+  group.replaceChildren();
+  for (const item of presetData.items) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = item.name;
+    button.setAttribute('aria-pressed', String(presetSelect.value === item.id));
+    button.disabled = presetBusy || !presetLoaded;
+    button.addEventListener('click', () => {
+      presetSelect.value = item.id;
+      presetSelect.dispatchEvent(new Event('change'));
+    });
+    group.appendChild(button);
+  }
+  if (presetLoaded && !presetData.items.length) {
+    const empty = document.createElement('span');
+    empty.textContent = '暂无预设';
+    group.appendChild(empty);
+  }
+}
+function presetButtons() {
+  renderPresetButtons();
+  const canManage = presetData.can_manage === true;
+  document.getElementById('preset-management').hidden = true;
+  document.getElementById('preset-permission').hidden = true;
+  if (!canManage) presetEditor.hidden = true;
+  const selected = presetData.items.some(item => item.id === presetSelect.value);
+  document.getElementById('preset-edit').disabled = !canManage || !selected || presetBusy;
+  document.getElementById('preset-delete').disabled = !canManage || !selected || presetBusy;
+  for (const id of ['preset-add','preset-save','preset-cancel']) document.getElementById(id).disabled = !canManage || presetBusy || !presetLoaded;
+  presetSelect.disabled = presetBusy || !presetLoaded;
+}
+function resetPresetDelete() {
+  clearTimeout(presetDeleteTimer);
+  presetDeleteId = '';
+  document.getElementById('preset-delete').textContent = '删除';
+}
+function renderPresets(selected = presetSelect.value) {
+  presetSelect.replaceChildren(new Option('选择预设，填入播报内容', ''));
+  for (const item of presetData.items) presetSelect.add(new Option(item.name, item.id));
+  if (presetData.items.some(item => item.id === selected)) presetSelect.value = selected;
+  resetPresetDelete();
+  presetButtons();
+}
+async function loadTextPresets() {
+  if (presetBusy || !presetEditor.hidden || document.visibilityState === 'hidden') return;
+  try {
+    const response = await fetch((window.API_BASE || '') + '/text-presets', { credentials: 'same-origin', headers: presetAuthHeaders(), cache: 'no-store' });
+    const data = await readBroadcastResponse(response);
+    if (!response.ok) throw new Error(data.error || '预设加载失败，请稍后重试');
+    if (presetEditor.hidden && !presetBusy) {
+      if (data.revision < presetData.revision) return;
+      const changed = !presetLoaded || data.revision !== presetData.revision || data.can_manage !== presetData.can_manage;
+      presetData = data; presetLoaded = true; if (changed) renderPresets();
+      if (presetMessage.dataset.loadError) { presetMessage.textContent = ''; delete presetMessage.dataset.loadError; }
+    }
+  } catch (error) {
+    presetMessage.textContent = error.message; presetMessage.dataset.loadError = '1';
+  }
+}
+presetSelect.addEventListener('change', () => {
+  resetPresetDelete();
+  const item = presetData.items.find(item => item.id === presetSelect.value);
+  if (item) { textInput.value = item.text; textInput.dispatchEvent(new Event('input')); }
+  presetButtons();
+});
+function openPresetEditor(item) {
+  if (!presetData.can_manage) return;
+  presetEditingId = item ? item.id : null;
+  presetEditorRevision = presetData.revision;
+  document.getElementById('preset-name').value = item ? item.name : '';
+  document.getElementById('preset-text').value = item ? item.text : textInput.value;
+  presetEditor.hidden = false; presetMessage.textContent = ''; resetPresetDelete();
+  document.getElementById('preset-name').focus();
+}
+document.getElementById('preset-add').addEventListener('click', () => openPresetEditor(null));
+document.getElementById('preset-edit').addEventListener('click', () => {
+  const item = presetData.items.find(item => item.id === presetSelect.value);
+  if (item) openPresetEditor(item);
+});
+document.getElementById('preset-cancel').addEventListener('click', () => { presetEditor.hidden = true; loadTextPresets(); });
+async function savePresetChange(change) {
+  if (presetBusy || !presetData.can_manage) return;
+  presetBusy = true; presetButtons();
+  presetMessage.textContent = '正在保存…';
+  try {
+    const response = await fetch((window.API_BASE || '') + '/text-presets', {
+      method: 'POST', credentials: 'same-origin', headers: presetAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(change),
+    });
+    const data = await readBroadcastResponse(response);
+    if (!response.ok) throw new Error(data.error || '保存失败，请重试');
+    const added = change.action === 'save' && change.id === null;
+    presetData = data;
+    presetEditor.hidden = true;
+    renderPresets(added ? data.items[data.items.length - 1].id : (change.action === 'delete' ? '' : change.id));
+    presetMessage.textContent = change.action === 'delete' ? '预设已删除' : '预设已保存，所有设备共享';
+  } catch (error) {
+    presetMessage.textContent = error.message;
+    // Keep the editor's draft and revision on conflict; cancel/reopen to retry.
+  } finally { presetBusy = false; presetButtons(); }
+}
+document.getElementById('preset-save').addEventListener('click', () => {
+  const name = document.getElementById('preset-name').value.trim();
+  const text = document.getElementById('preset-text').value.trim();
+  if (!name || !text) { presetMessage.textContent = '请填写预设名称和播报内容'; return; }
+  savePresetChange({ action: 'save', id: presetEditingId, name, text, revision: presetEditorRevision });
+});
+document.getElementById('preset-delete').addEventListener('click', () => {
+  if (!presetData.can_manage) return;
+  const id = presetSelect.value;
+  if (!id || presetBusy) return;
+  if (presetDeleteId !== id) {
+    presetDeleteId = id; document.getElementById('preset-delete').textContent = '确认删除';
+    presetDeleteTimer = setTimeout(resetPresetDelete, 5000); return;
+  }
+  resetPresetDelete();
+  savePresetChange({ action: 'delete', id, revision: presetData.revision });
+});
+presetButtons();
+loadTextPresets();
+setInterval(loadTextPresets, 15000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadTextPresets(); });
+
+// Show version number
+fetch((window.API_BASE || '') + '/version', { credentials: 'same-origin' }).then(r => r.json()).then(d => {
+  document.getElementById('ver').textContent = d.version;
+}).catch(() => {
+  document.getElementById('ver').textContent = '';
+});
+</script>
+</body>
+</html>

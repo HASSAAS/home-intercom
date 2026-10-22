@@ -1,0 +1,130 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Home Intercom",
+                "description": "Rooms are managed in the PWA (Settings → Rooms). You can add speakers after this step."
+            }
+        },
+        "abort": {
+            "no_media_players": "No media_player entities found in Home Assistant.",
+            "already_configured": "Home Intercom is already configured. Add or edit rooms in the PWA."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "管理音箱与预设",
+                "description": "选择预设播报文字管理，或选择房间进行编辑。已配置 {room_count} 个房间。",
+                "data": {
+                    "room_choice": "管理项目"
+                }
+            },
+            "add_room": {
+                "title": "Add Room",
+                "description": "Select area and media player. Room name defaults to area name.",
+                "data": {
+                    "area_id": "Area",
+                    "name": "Room Name (optional)",
+                    "entity_id": "Media Player",
+                    "announce_volume": "Announce Volume (0-100, 0=disabled)",
+                    "pause_buffer": "Pause Buffer (seconds)"
+                }
+            },
+            "edit_room": {
+                "title": "Edit Room — {room_name}",
+                "description": "Change the media player entity for this room. Set volume/buffer to 0 to use defaults.",
+                "data": {
+                    "entity_id": "Media Player",
+                    "announce_volume": "Announce Volume (0-100, 0=disabled)",
+                    "pause_buffer": "Pause Buffer (seconds)"
+                }
+            },
+            "presets": {
+                "title": "预设播报文字管理",
+                "description": "仅 HA 管理员可维护。这里与家庭广播仪表盘共享同一份预设。",
+                "data": {
+                    "preset_choice": "选择预设或新增"
+                }
+            },
+            "preset_edit": {
+                "title": "编辑预设播报文字",
+                "description": "名称 1–30 字，内容 1–500 字。保存后所有家庭广播页面同步更新。",
+                "data": {
+                    "name": "预设名称",
+                    "text": "播报内容",
+                    "action": "操作"
+                }
+            },
+            "preset_delete": {
+                "title": "删除预设",
+                "description": "勾选确认后删除此预设。不勾选则返回列表。",
+                "data": {
+                    "confirm": "确认删除此预设"
+                }
+            }
+        },
+        "error": {
+            "room_exists": "A room with this area is already configured.",
+            "preset_invalid": "保存失败：请检查名称及内容长度；如其他设备已更新，请取消返回列表后重新编辑。"
+        },
+        "abort": {
+            "buttons_read_only": "Intercom button devices are auto-managed — no configuration needed. They appear automatically when an ESP32 button checks in."
+        }
+    },
+    "entity": {
+        "sensor": {
+            "error": {
+                "name": "Error"
+            },
+            "state": {
+                "name": "State"
+            },
+            "volume": {
+                "name": "Volume"
+            },
+            "media": {
+                "name": "Now Playing"
+            },
+            "player_type": {
+                "name": "Player Type"
+            },
+            "config_announce_volume": {
+                "name": "Announce Volume"
+            },
+            "config_pause_buffer": {
+                "name": "Pause Buffer"
+            },
+            "last_seen": {
+                "name": "Last seen"
+            },
+            "firmware_version": {
+                "name": "Firmware"
+            }
+        },
+        "binary_sensor": {
+            "connected": {
+                "name": "Connected"
+            },
+            "online": {
+                "name": "Online"
+            }
+        },
+        "number": {
+            "announce_volume": {
+                "name": "Announce Volume"
+            },
+            "pause_buffer": {
+                "name": "Pause Buffer"
+            }
+        },
+        "switch": {
+            "revoked": {
+                "name": "Revoked"
+            },
+            "approved": {
+                "name": "Approved"
+            }
+        }
+    }
+}

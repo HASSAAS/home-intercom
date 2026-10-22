@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.storage/
+.env
+secrets.yaml
+home_intercom.yaml
+*.log
