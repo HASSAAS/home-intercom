@@ -1,13 +1,12 @@
 # 家庭广播
 
-基于 [mdj2812/home-intercom](https://github.com/mdj2812/home-intercom) 的 Home Assistant 自定义集成，包含本地中文界面与文字播报扩展。本包版本对应集成清单 2.2.7；不是原作者的官方发行包。
+基于 [mdj2812/home-intercom](https://github.com/mdj2812/home-intercom) 的 Home Assistant 自定义集成，包含本地中文界面与文字播报扩展。本包版本对应集成清单 2.3.0；不是原作者的官方发行包。
 
 ## 功能
 
 - 浏览器按住说话，向指定房间或全部房间广播。
 - 房间、音箱、音量和提示音管理。
 - 小爱音箱文字播报与预设文本按钮。
-- 支持配套 ESP32 广播按键；硬件与固件需另行准备。
 
 ## 手动安装
 
@@ -36,4 +35,4 @@
 
 ## 来源与许可
 
-保留原项目 MIT 许可，详见 `LICENSE`。按钮固件同步源为 `HASSAAS/home-intercom` 的最新 Release。需额外上传 `intercom-button-*.bin`（可附同名 `.sig`）；集成 ZIP 不能用于按钮 OTA。集成清单中的原作者与上游问题地址保持原样；本地扩展的问题应提交到本包的发布仓库。
+保留原项目 MIT 许可，详见 `LICENSE`。原作者署名保留；问题请提交到 HASSAAS/home-intercom。

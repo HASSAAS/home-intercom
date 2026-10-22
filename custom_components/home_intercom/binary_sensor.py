@@ -1,10 +1,10 @@
-"""Binary sensor platform — per-room connectivity + per-device online status."""
+"""Binary sensor platform — per-room connectivity."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -16,11 +16,11 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import BUTTONS_UNIQUE_ID, CONF_ROOMS, DEVICE_ONLINE_WINDOW_SECS, DOMAIN
+from .const import CONF_ROOMS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-_ONLINE_WINDOW = timedelta(seconds=DEVICE_ONLINE_WINDOW_SECS)
+
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,26 +38,7 @@ async def async_setup_entry(
     """Set up binary sensor from config entry.
 
     Room entries → ConnectedSensor per room.
-    Buttons entry → ButtonOnlineSensor per device.
     """
-    if entry.unique_id == BUTTONS_UNIQUE_ID:
-        # Buttons entry: per-device online sensors
-        entities: list[ConnectedSensor | ButtonOnlineSensor] = []
-        device_store = hass.data.get(DOMAIN, {}).get("device_store")
-        if device_store is not None:
-            for mac, dev in device_store.devices.items():
-                if dev.get("revoked"):
-                    continue
-                entities.append(
-                    ButtonOnlineSensor(
-                        entry=entry,
-                        mac=mac,
-                        device_name=dev.get("name", mac),
-                    )
-                )
-        async_add_entities(entities)
-        return
-
     # Room entry: per-room connectivity sensors
     rooms: dict[str, dict] = {}
     rooms.update(entry.data.get(CONF_ROOMS, {}))
@@ -118,58 +99,3 @@ class ConnectedSensor(BinarySensorEntity):
         if state is None or state.state == "unavailable":
             return False
         return state.state not in ("unavailable", "unknown")
-
-
-class ButtonOnlineSensor(BinarySensorEntity):
-    """Binary sensor: is this intercom button online (seen within the hello window)."""
-
-    _attr_has_entity_name = True
-    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_should_poll = True
-
-    def __init__(self, entry: ConfigEntry, mac: str, device_name: str) -> None:
-        """Initialize."""
-        self._entry = entry
-        self._mac = mac
-        self._device_name = device_name
-        self.entity_description = BinarySensorEntityDescription(
-            key="online",
-            translation_key="online",
-        )
-        self._attr_unique_id = f"{entry.entry_id}_{mac}_online_v1"
-        self._attr_name = "Online"
-        self.entity_id = f"binary_sensor.{_safe_entity_id(mac)}_online"
-
-    @property
-    def device_info(self):
-        """Associate with the button's HA device."""
-        return {
-            "identifiers": {(DOMAIN, self._mac)},
-            "name": self._device_name,
-            "manufacturer": "Espressif",
-            "model": "ESP32 Intercom Button",
-        }
-
-    @property
-    def is_on(self) -> bool:
-        """Return True if the button checked in within _ONLINE_WINDOW."""
-        store = self.hass.data.get(DOMAIN, {}).get("device_store")
-        if store is None:
-            return False
-        dev = store.devices.get(self._mac)
-        if dev is None or dev.get("revoked"):
-            return False
-        last_seen_str = dev.get("last_seen", "")
-        if not last_seen_str:
-            return False
-        try:
-            last_seen = datetime.fromisoformat(last_seen_str)
-        except ValueError:
-            return False
-        return (datetime.now(UTC) - last_seen) <= _ONLINE_WINDOW
-
-
-def _safe_entity_id(mac: str) -> str:
-    """Convert a MAC address to a safe entity id fragment."""
-    return mac.lower().replace(":", "_")

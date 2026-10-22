@@ -2,48 +2,27 @@
 
 Rooms live on the writable UI config entry (PWA / Options Flow). A leftover
 YAML SOURCE_IMPORT entry is imported once into that UI entry and then removed
-(issue #75). The buttons entry is separate and has no rooms.
+(issue #75).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import re
 import secrets
-from datetime import timedelta
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_ENTITY_ID, CONF_NAME
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from .announce import handle_announce_service
 from .api import register_api_views
-from .const import (
-    AUDIO_SUBDIR,
-    BUTTONS_UNIQUE_ID,
-    CONF_ANNOUNCE_VOLUME,
-    CONF_PAUSE_BUFFER,
-    CONF_ROOMS,
-    DOMAIN,
-    FIRMWARE_CACHE_SUBDIR,
-    FIRMWARE_POLL_INTERVAL_SECS,
-    KEY_BUTTON_ENTRY_ID,
-    MAC_PATTERN,
-    PLATFORMS,
-    PWA_TOKEN_STORAGE_KEY,
-    PWA_TOKEN_STORAGE_VERSION,
-    SERVICE_ANNOUNCE,
-    WWW_DIR,
-)
-from .device_store import DeviceStore
-from .firmware import refresh_cached_firmware
+from .const import AUDIO_SUBDIR, CONF_ANNOUNCE_VOLUME, CONF_PAUSE_BUFFER, CONF_ROOMS, DOMAIN, PLATFORMS, PWA_TOKEN_STORAGE_KEY, PWA_TOKEN_STORAGE_VERSION, SERVICE_ANNOUNCE, WWW_DIR
 from .rooms import combined_entry_rooms
 
 _LOGGER = logging.getLogger(__name__)
@@ -110,13 +89,12 @@ def _move_room_devices(hass: HomeAssistant, from_entry_id: str, to_entry_id: str
 
     if from_entry_id == to_entry_id:
         return
-    mac_re = re.compile(MAC_PATTERN)
     registry = dr.async_get(hass)
     for device in list(registry.devices.get_devices_for_config_entry_id(from_entry_id)):
         room_ids = [
             ident
             for domain, ident in device.identifiers
-            if domain == DOMAIN and not mac_re.fullmatch(ident)
+            if domain == DOMAIN
         ]
         if not room_ids:
             continue
@@ -192,15 +170,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up or update a config entry. Merges all entries' rooms for services."""
     # Rename existing default titles while preserving user-defined names.
-    default_titles = {"Home Intercom": "家庭广播", "Home Intercom (YAML)": "家庭广播", "Home Intercom Buttons": "家庭广播按键"}
+    default_titles = {"Home Intercom": "家庭广播", "Home Intercom (YAML)": "家庭广播"}
     if entry.title in default_titles:
         hass.config_entries.async_update_entry(entry, title=default_titles[entry.title])
 
-    # Button entry: just forward platforms (no rooms, no services)
-    if entry.unique_id == BUTTONS_UNIQUE_ID:
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        # Listen for new device registrations → reload to create entities
-        _setup_device_store_listener(hass, entry)
+    # Older installations may still contain an empty legacy entry.
+    if entry.unique_id == "home_intercom_buttons":
         return True
 
     room_map = combined_entry_rooms(entry)
@@ -211,9 +186,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN]["entry_rooms"][entry.entry_id] = room_map
 
     # Drop HA devices for rooms no longer on this entry (YAML #63, UI PWA delete).
-    # Button devices are MAC identifiers on a different entry — do not run this there.
-    if entry.unique_id != BUTTONS_UNIQUE_ID:
-        _reconcile_room_devices(hass, entry.entry_id, set(room_map.keys()))
+    _reconcile_room_devices(hass, entry.entry_id, set(room_map.keys()))
 
     # Full setup with merged rooms from all entries
     await _full_setup(hass, entry)
@@ -224,8 +197,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if entry.unique_id == BUTTONS_UNIQUE_ID:
-        return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if entry.unique_id == "home_intercom_buttons":
+        return True
 
     # Room entry (UI): unload platforms so reload can re-forward (#64)
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
@@ -235,9 +208,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].setdefault("entry_rooms", {}).pop(entry.entry_id, None)
         remaining = hass.data[DOMAIN].get("entry_rooms", {})
         if not remaining:
-            unsub = hass.data[DOMAIN].get("firmware_poll_unsub")
-            if unsub:
-                unsub()
             hass.services.async_remove(DOMAIN, SERVICE_ANNOUNCE)
             hass.data.pop(DOMAIN, None)
         else:
@@ -260,38 +230,6 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _schedule_firmware_poll(hass: HomeAssistant) -> None:
-    """Refresh GitHub firmware cache shortly after setup, then hourly.
-
-    Skips if a poller is already registered (multiple room entries share one).
-    GitHub is contacted only while at least one button is registered.
-    """
-    if hass.data[DOMAIN].get("firmware_poll_unsub") is not None:
-        return
-
-    async def _interval(_now=None) -> None:
-        data = hass.data.get(DOMAIN, {})
-        directory = data.get("firmware_dir")
-        store = data.get("device_store")
-        if not directory or not store or not store.devices:
-            return
-        await hass.async_add_executor_job(refresh_cached_firmware, directory)
-
-    unsubs = [
-        async_call_later(hass, 0, _interval),
-        async_track_time_interval(hass, _interval, timedelta(seconds=FIRMWARE_POLL_INTERVAL_SECS)),
-    ]
-
-    def _unsub() -> None:
-        for unsub in unsubs:
-            unsub()
-
-    hass.data[DOMAIN]["firmware_poll_unsub"] = _unsub
-    _LOGGER.info(
-        "firmware cache poller every %ss (%s)",
-        FIRMWARE_POLL_INTERVAL_SECS,
-        hass.data[DOMAIN]["firmware_dir"],
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -332,30 +270,16 @@ async def _full_setup(hass: HomeAssistant, entry: ConfigEntry) -> None:
         all_rooms.update(rooms)
 
     audio_dir = hass.config.path(WWW_DIR, AUDIO_SUBDIR)
-    firmware_dir = os.path.join(audio_dir, FIRMWARE_CACHE_SUBDIR)
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].update(
         {
             "rooms": all_rooms,
             "audio_dir": audio_dir,
-            "firmware_dir": firmware_dir,
         }
     )
 
     await hass.async_add_executor_job(lambda: os.makedirs(audio_dir, exist_ok=True))
-    await hass.async_add_executor_job(lambda: os.makedirs(firmware_dir, exist_ok=True))
     hass.data[DOMAIN]["pwa_token"] = await _async_load_pwa_token(hass)
-
-    # Device registry for ESP32 intercom buttons (issue #40)
-    device_store = DeviceStore(hass)
-    await device_store.async_load()
-    hass.data[DOMAIN]["device_store"] = device_store
-
-    _schedule_firmware_poll(hass)
-
-    # Ensure a dedicated config entry for button devices (issue #48)
-    button_entry_id = await _ensure_button_entry(hass, device_store)
-    hass.data[DOMAIN][KEY_BUTTON_ENTRY_ID] = button_entry_id
 
     # Initialize error/state tracking
     hass.data[DOMAIN].setdefault("errors", {})
@@ -364,22 +288,13 @@ async def _full_setup(hass: HomeAssistant, entry: ConfigEntry) -> None:
     register_api_views(hass)
     _register_services(hass, all_rooms)
     _register_devices(hass, entry.entry_id, entry_rooms.get(entry.entry_id, {}))
-    # Button devices registered under their own entry if it exists
-    if button_entry_id:
-        _register_button_devices(hass, button_entry_id, device_store)
-
-    # First hello has no buttons-entry listener yet — keep HA's device
-    # registry in sync from this YAML/UI entry instead (PWA delete, #51).
-    _setup_button_registry_sync(hass, entry)
-
-    # Forward to sensor/number/binary_sensor platforms
+    # Forward room diagnostic and volume platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _LOGGER.info(
-        "Home Intercom — %d rooms (%d entries), %d buttons, audio: %s",
+        "Home Intercom — %d rooms (%d entries), audio: %s",
         len(all_rooms),
         len(entry_rooms),
-        len(device_store.devices),
         audio_dir,
     )
 
@@ -409,12 +324,7 @@ def _register_services(hass: HomeAssistant, room_map: dict[str, Any]) -> None:
 async def async_remove_config_entry_device(
     hass: HomeAssistant, entry: ConfigEntry, device_entry: Any
 ) -> bool:
-    """Allow device deletion for room and button devices.
-
-    Deleting a button device removes it from device_store.json
-    (unlike revoke which keeps the record but blocks hello).
-    """
-    _handle_button_device_delete(hass, device_entry)
+    """Remove a room device from the room configuration."""
 
     # Find which room this device belongs to
     room_id = None
@@ -465,78 +375,10 @@ def _media_player_manufacturer(
     return "Home Intercom"
 
 
-def _handle_button_device_delete(hass: HomeAssistant, device_entry: Any) -> None:
-    """Delete a button device from device_store.json when removed from HA.
-
-    Unlike revoke (which keeps the record but blocks hello), delete
-    removes it entirely.  The device can only come back by sending
-    a new /devices/hello.
-    """
-    import re
-
-    for domain, ident in device_entry.identifiers:
-        if domain != DOMAIN:
-            continue
-        if not re.match(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", ident.upper()):
-            continue
-        store: DeviceStore | None = hass.data.get(DOMAIN, {}).get("device_store")
-        if store is None:
-            return
-        _LOGGER.info("Button %s deleted from HA — removing from device_store", ident)
-        hass.async_create_task(store.remove(ident))
-        return
 
 
-def _setup_button_registry_sync(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Create/update HA button devices when the store changes.
-
-    The dedicated buttons config entry is only created once a device
-    exists, so the first ``/devices/hello`` has no buttons-entry listener.
-    Subscribe the YAML/UI entry so Settings → Devices gets the button
-    without a restart, and PWA delete can remove that HA device.
-    """
-    from homeassistant.helpers.dispatcher import async_dispatcher_connect
-
-    async def _on_store_changed() -> None:
-        store = hass.data.get(DOMAIN, {}).get("device_store")
-        if store is None:
-            return
-        button_entry_id = await _ensure_button_entry(hass, store)
-        hass.data[DOMAIN][KEY_BUTTON_ENTRY_ID] = button_entry_id
-        if button_entry_id:
-            _register_button_devices(hass, button_entry_id, store)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, f"{DOMAIN}_device_store_changed", _on_store_changed)
-    )
 
 
-def _setup_device_store_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Listen for device_store_changed signal → debounced reload of button entry.
-
-    Multiple hello calls in quick succession trigger only one reload
-    after a 2-second quiet period, avoiding race conditions.
-    """
-    import asyncio
-
-    from homeassistant.helpers.dispatcher import async_dispatcher_connect
-
-    _timer: asyncio.TimerHandle | None = None
-
-    async def _reload_now() -> None:
-        _LOGGER.info("Device store changed — reloading button entry %s", entry.entry_id)
-        await hass.config_entries.async_reload(entry.entry_id)
-
-    async def _on_store_changed() -> None:
-        nonlocal _timer
-        if _timer is not None:
-            _timer.cancel()
-        _timer = hass.loop.call_later(2.0, lambda: hass.async_create_task(_reload_now()))
-
-    # Auto-unsubscribe on entry unload to prevent stacking
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, f"{DOMAIN}_device_store_changed", _on_store_changed)
-    )
 
 
 def _register_devices(hass: HomeAssistant, entry_id: str, room_map: dict[str, Any]) -> None:
@@ -604,204 +446,4 @@ def _find_yaml_entry(entries: list[ConfigEntry]) -> ConfigEntry | None:
     for entry in entries:
         if entry.unique_id == YAML_UNIQUE_ID:
             return entry
-    return None
-
-
-def _register_button_devices(hass: HomeAssistant, entry_id: str, device_store: DeviceStore) -> None:
-    """Register each non-revoked intercom button as an HA device.
-
-    Device info (name, area) is owned by the HA device registry.
-    Changes sync back to device_store via
-    _async_device_registry_updated.
-    """
-    from homeassistant.helpers import device_registry as dr
-
-    registry = dr.async_get(hass)
-
-    for mac, dev in device_store.devices.items():
-        if dev.get("revoked"):
-            continue
-        device = registry.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={(DOMAIN, mac)},
-            name=dev.get("name", mac),
-            manufacturer="Espressif",
-            model="ESP32 Intercom Button",
-            serial_number=mac,
-            sw_version=dev.get("firmware_version"),
-            suggested_area=dev.get("room") or None,
-        )
-        # Ensure the device is owned by the button entry (not just a room entry)
-        if entry_id not in device.config_entries:
-            registry.async_update_device(device.id, add_config_entry_id=entry_id)
-        # Remove room-entry associations so button entry becomes primary
-        for old_eid in list(device.config_entries):
-            if old_eid != entry_id:
-                registry.async_update_device(device.id, remove_config_entry_id=old_eid)
-        # Update manufacturer and serial if they changed (existing devices from 2.0.2)
-        updates: dict[str, Any] = {}
-        if not device.name:
-            updates["name"] = dev.get("name", mac)
-        if device.manufacturer != "Espressif":
-            updates["manufacturer"] = "Espressif"
-        if not device.model:
-            updates["model"] = "ESP32 Intercom Button"
-        if device.serial_number != mac:
-            updates["serial_number"] = mac
-        if updates:
-            registry.async_update_device(device.id, **updates)
-
-    _reconcile_button_devices(hass, entry_id, device_store)
-
-    # Listen once for HA-side edits (rename, area change) → sync back to store.
-    # Look up the live store so reloads do not stack stale closures.
-    if not hass.data.get(DOMAIN, {}).get("_button_devreg_unsub"):
-
-        @callback
-        def _on_device_registry_updated(event: Any) -> None:
-            store = hass.data.get(DOMAIN, {}).get("device_store")
-            if store is not None:
-                _async_device_registry_updated(hass, event, store)
-
-        hass.data[DOMAIN]["_button_devreg_unsub"] = hass.bus.async_listen(
-            "device_registry_updated", _on_device_registry_updated
-        )
-
-
-def _reconcile_button_devices(
-    hass: HomeAssistant, entry_id: str, device_store: DeviceStore
-) -> None:
-    """Remove HA devices for buttons that are gone from the store.
-
-    ``_register_button_devices`` only creates; without this, a PWA/API
-    delete leaves an empty card in Settings → Devices.
-    """
-    from homeassistant.helpers import device_registry as dr
-
-    registry = dr.async_get(hass)
-    known = set(device_store.devices)
-    mac_re = re.compile(MAC_PATTERN)
-
-    for device in list(registry.devices.get_devices_for_config_entry_id(entry_id)):
-        for domain, ident in device.identifiers:
-            if domain != DOMAIN:
-                continue
-            mac = ident.upper()
-            if not mac_re.match(mac):
-                continue
-            if mac not in known:
-                _LOGGER.info("Removing HA device for deleted button %s", mac)
-                registry.async_remove_device(device.id)
-            break
-
-
-@callback
-def _async_device_registry_updated(
-    hass: HomeAssistant, event: Any, device_store: DeviceStore
-) -> None:
-    """Sync HA device registry edits back to device_store.
-
-    Triggered when a user renames a button device or moves it to a
-    different area in the HA UI. (Deletion is handled separately in
-    async_remove_config_entry_device.)
-    """
-    action = event.data.get("action")
-    device_id: str | None = event.data.get("device_id")
-    if not device_id:
-        return
-
-    from homeassistant.helpers import device_registry as dr
-
-    registry = dr.async_get(hass)
-    device_entry = registry.async_get(device_id)
-    if device_entry is None:
-        return
-
-    # Check if this is one of our button devices
-    mac: str | None = None
-    for domain, identifier in device_entry.identifiers:
-        if domain == DOMAIN:
-            mac = identifier
-            break
-    if mac is None:
-        return  # not our device
-
-    existing = device_store.devices.get(mac)
-    if existing is None:
-        return
-
-    if action == "update":
-        changes: dict[str, Any] = event.data.get("changes", {})
-        _async_handle_device_update(hass, device_store, mac, existing, changes)
-
-
-async def _async_sync_device_field(
-    hass: HomeAssistant, device_store: DeviceStore, mac: str, field: str, value: str
-) -> None:
-    """Persist a device_store field change (from HA UI edit)."""
-    try:
-        await device_store.update_field(mac, field, value)
-    except ValueError:
-        _LOGGER.warning("Cannot update field %r for device %s", field, mac)
-
-
-def _async_handle_device_update(
-    hass: HomeAssistant,
-    device_store: DeviceStore,
-    mac: str,
-    existing: dict[str, Any],
-    changes: dict[str, Any],
-) -> None:
-    """Handle device_registry_updated with action=update for a button device."""
-    # HA device renamed → update device_store name
-    new_name = changes.get("name")
-    if new_name and new_name != existing.get("name"):
-        _LOGGER.info("Button %s renamed via HA UI: %r → %r", mac, existing.get("name"), new_name)
-        hass.async_create_task(_async_sync_device_field(hass, device_store, mac, "name", new_name))
-
-    # Device moved to a different area → update device_store room
-    new_area_id = changes.get("area_id")
-    if new_area_id is not None:
-        from homeassistant.helpers import area_registry as ar
-
-        area_reg = ar.async_get(hass)
-        new_room = ""
-        if new_area_id:
-            area_entry = area_reg.async_get_area(new_area_id)
-            new_room = area_entry.name if area_entry else new_area_id
-        if new_room != existing.get("room"):
-            _LOGGER.info("Button %s moved to area %r via HA UI", mac, new_room)
-            hass.async_create_task(
-                _async_sync_device_field(hass, device_store, mac, "room", new_room)
-            )
-
-
-async def _ensure_button_entry(hass: HomeAssistant, device_store: DeviceStore) -> str | None:
-    """Create a dedicated config entry for intercom buttons if any exist (issue #48).
-
-    Returns the button entry_id, or None if there are no devices yet.
-    The buttons entry appears as a separate card in Settings → Devices & Services.
-    """
-    # Already exists?
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.unique_id == BUTTONS_UNIQUE_ID:
-            return entry.entry_id
-
-    # No devices yet — don't create an empty entry
-    active = [d for d in device_store.devices.values() if not d.get("revoked")]
-    if not active:
-        return None
-
-    # Create the entry via flow (no user interaction needed)
-    await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": "buttons"},
-        data={},
-    )
-    # Look up the newly created entry
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.unique_id == BUTTONS_UNIQUE_ID:
-            return entry.entry_id
-
-    _LOGGER.warning("Button entry flow did not create an entry — button devices won't appear")
     return None

@@ -43,7 +43,7 @@
 })();
 </script>
 <script src="/static/i18n.js"></script>
-<link rel="stylesheet" href="/static/broadcast-dashboard-v5.css">
+<link rel="stylesheet" href="/static/broadcast-dashboard-v6.css">
 </head>
 <body>
 
@@ -83,16 +83,6 @@
     </div>
     <p id="text-broadcast-message" role="status" aria-live="polite">播放系统提示音后朗读 · 最多 500 字</p>
   </section>
-  </div>
-
-  <div class="devices-section" id="devices-section" hidden>
-    <h2 class="devices-heading">
-      <button type="button" id="devices-toggle" class="devices-toggle" aria-expanded="false" aria-controls="devices-list">
-        <span class="devices-title" data-i18n="devicesTitle">对讲按钮</span>
-        <span class="devices-chevron" aria-hidden="true"></span>
-      </button>
-    </h2>
-    <div class="devices-list" id="devices-list" hidden></div>
   </div>
 
   <footer class="footer">
@@ -450,7 +440,6 @@ function rebuildRoomGrid(rooms) {
     }
   }
   if (typeof window.renderRoomsSettings === 'function') window.renderRoomsSettings();
-  if (typeof window.renderDevices === 'function' && window._DEVICES) window.renderDevices();
   updateTextBroadcastTargets();
 }
 
@@ -472,109 +461,6 @@ function setCardState(card, state, msg) {
   card.querySelector('.status').textContent = msg;
 }
 
-// ——— Device list + pending approval (issues #52, #51) ———
-// window._DEVICES caches the last fetch so language switches re-render instantly.
-window._DEVICES = null;
-
-window.renderDevices = function () {
-  const section = document.getElementById('devices-section');
-  const list = document.getElementById('devices-list');
-  const devices = window._DEVICES;
-  if (!devices || !Object.keys(devices).length) {
-    section.hidden = true;
-    return;
-  }
-  const macs = Object.keys(devices).sort((a, b) => {
-    const na = devices[a].name || a;
-    const nb = devices[b].name || b;
-    const byName = na.localeCompare(nb);
-    return byName || a.localeCompare(b);
-  });
-  list.innerHTML = '';
-  let anyPending = false;
-  for (const mac of macs) {
-    const d = devices[mac];
-    const pending = !!d.pending;
-    const revoked = !!d.revoked;
-    const online = !revoked && !pending && deviceIsOnline(d.last_seen);
-    if (pending) anyPending = true;
-
-    const card = el('article',
-      'device-card' + (pending ? ' pending' : '') + (revoked ? ' revoked' : '') + (online ? ' online' : ''));
-
-    const top = el('div', 'device-card-top');
-    const identity = el('div', 'device-card-identity');
-    const title = el('div', 'device-card-title');
-    const dotState = online ? ' on' : pending ? ' wait' : ' off';
-    title.appendChild(el('span', 'device-card-dot' + dotState));
-    title.appendChild(el('span', 'device-card-name', d.name || mac));
-    identity.appendChild(title);
-    identity.appendChild(el('div', 'device-card-mac', mac));
-
-    const badges = el('div', 'device-card-badges');
-    if (pending) badges.appendChild(el('span', 'device-badge pending', I18N.t('devicePending')));
-    if (revoked) badges.appendChild(el('span', 'device-badge revoked', I18N.t('deviceRevoked')));
-    if (!pending && !revoked) {
-      badges.appendChild(el('span', 'device-badge ' + (online ? 'online' : 'offline'),
-        I18N.t(online ? 'deviceOnline' : 'deviceOffline')));
-      if (d.firmware_update_available) {
-        badges.appendChild(el('span', 'device-badge update', I18N.t('deviceUpdateAvailable')));
-      }
-    }
-    top.appendChild(identity);
-    top.appendChild(badges);
-
-    const meta = [];
-    if (d.room && ROOM_NAMES[d.room]) meta.push(ROOM_NAMES[d.room]);
-    const fw = d.firmware_version || '';
-    const latestFw = d.firmware_latest || '';
-    if (fw && latestFw && d.firmware_update_available) meta.push(fw + ' → ' + latestFw);
-    else if (fw) meta.push(fw);
-    meta.push(formatDeviceSeen(d.last_seen));
-
-    const actions = el('div', 'device-card-actions');
-    actions.appendChild(deviceActionButton(
-      I18N.t(pending ? 'deviceApprove' : 'deviceDeapprove'),
-      pending ? 'primary' : '',
-      () => manageDevice(mac, pending ? 'approve' : 'deapprove', card)
-    ));
-    actions.appendChild(deviceActionButton(
-      I18N.t(revoked ? 'deviceUnrevoke' : 'deviceRevoke'),
-      revoked ? 'primary' : '',
-      () => manageDevice(mac, revoked ? 'unrevoke' : 'revoke', card)
-    ));
-    const needsUpdate = !!d.firmware_update_available;
-    const upToDate = !!(d.firmware_latest && !needsUpdate);
-    const updateBtn = deviceActionButton(
-      I18N.t('deviceUpdate'),
-      needsUpdate && online ? 'primary' : '',
-      () => {
-        if (!confirm(I18N.t('deviceUpdateConfirm'))) return;
-        manageDevice(mac, 'ota', card);
-      },
-      !online || !needsUpdate
-    );
-    if (upToDate && online) updateBtn.title = I18N.t('deviceUpToDate');
-    actions.appendChild(updateBtn);
-    actions.appendChild(deviceActionButton(I18N.t('deviceDelete'), 'danger', () => {
-      if (!confirm(I18N.t('deviceDeleteConfirm'))) return;
-      manageDevice(mac, 'delete', card);
-    }));
-
-    card.appendChild(top);
-    card.appendChild(el('div', 'device-card-meta', meta.join(' · ')));
-    card.appendChild(devicePinsBlock(mac, d));
-    card.appendChild(actions);
-    list.appendChild(card);
-  }
-  section.hidden = false;
-  if (anyPending) {
-    const toggle = document.getElementById('devices-toggle');
-    if (toggle) toggle.setAttribute('aria-expanded', 'true');
-    list.hidden = false;
-  }
-};
-
 function el(tag, className, text) {
   const n = document.createElement(tag);
   if (className) n.className = className;
@@ -582,7 +468,7 @@ function el(tag, className, text) {
   return n;
 }
 
-function deviceActionButton(label, extraClass, onClick, disabled) {
+function roomActionButton(label, extraClass, onClick, disabled) {
   const btn = el('button', 'device-action' + (extraClass ? ' ' + extraClass : ''), label);
   btn.type = 'button';
   btn.draggable = false;
@@ -594,126 +480,6 @@ function deviceActionButton(label, extraClass, onClick, disabled) {
     onClick();
   });
   return btn;
-}
-
-function deviceGpioList(device) {
-  const pins = Array.isArray(device.pins) ? device.pins : [];
-  const buttons = (device.buttons && typeof device.buttons === 'object') ? device.buttons : {};
-  const set = new Set();
-  pins.forEach((p) => set.add(String(p)));
-  Object.keys(buttons).forEach((k) => set.add(String(k)));
-  return [...set].sort((a, b) => Number(a) - Number(b));
-}
-
-function devicePinsBlock(mac, device) {
-  const wrap = el('div', 'device-pins');
-  wrap.appendChild(el('div', 'device-pins-title', I18N.t('devicePinsTitle')));
-  const gpios = deviceGpioList(device);
-  if (!gpios.length) {
-    wrap.appendChild(el('div', 'device-pins-pending', I18N.t('devicePinsPending')));
-    return wrap;
-  }
-  const rooms = catalogRooms();
-  const assigned = (device.buttons && typeof device.buttons === 'object') ? device.buttons : {};
-  gpios.forEach((gpio) => {
-    const row = el('div', 'device-pin-row');
-    row.appendChild(el('span', 'device-pin-gpio', I18N.t('devicePinGpio').replace('%s', gpio)));
-    const select = document.createElement('select');
-    select.dataset.gpio = gpio;
-    const unset = document.createElement('option');
-    unset.value = '';
-    unset.textContent = I18N.t('devicePinUnassigned');
-    select.appendChild(unset);
-    const current = assigned[gpio] || '';
-    Object.keys(rooms).forEach((key) => {
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = rooms[key].name || key;
-      select.appendChild(opt);
-    });
-    if (current && !rooms[current]) {
-      const missing = document.createElement('option');
-      missing.value = current;
-      missing.disabled = true;
-      missing.selected = true;
-      missing.textContent = playerMissingLabel(current);
-      select.appendChild(missing);
-    } else {
-      select.value = current;
-    }
-    select.addEventListener('change', () => saveDeviceButtons(mac, wrap.closest('.device-card')));
-    row.appendChild(select);
-    wrap.appendChild(row);
-  });
-  return wrap;
-}
-
-function saveDeviceButtons(mac, card) {
-  if (!card) return;
-  const buttons = {};
-  card.querySelectorAll('select[data-gpio]').forEach((sel) => {
-    const room = sel.value.trim();
-    if (room) buttons[sel.dataset.gpio] = room;
-  });
-  manageDevice(mac, 'buttons', card, { buttons });
-}
-
-function deviceIsOnline(lastSeen) {
-  const t = Date.parse(lastSeen || '');
-  return !Number.isNaN(t) && (Date.now() - t) <= 30 * 1000;
-}
-
-function refreshDevicesIfVisible() {
-  if (document.visibilityState === 'hidden') return;
-  loadDevices();
-}
-
-function formatDeviceSeen(lastSeen) {
-  const t = Date.parse(lastSeen || '');
-  if (Number.isNaN(t)) return I18N.t('deviceNeverSeen');
-  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
-  if (sec < 45) return I18N.t('deviceJustNow');
-  if (sec < 3600) return I18N.t('deviceMinutesAgo').replace('%s', String(Math.max(1, Math.floor(sec / 60))));
-  if (sec < 86400) return I18N.t('deviceHoursAgo').replace('%s', String(Math.max(1, Math.floor(sec / 3600))));
-  return String(lastSeen).replace('T', ' ').slice(0, 16);
-}
-
-async function manageDevice(mac, action, card, extra) {
-  if (card) card.classList.add('busy');
-  try {
-    const resp = await fetch((window.API_BASE || '') + '/devices/manage', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ mac, action, ...(extra || {}) }),
-    });
-    if (resp.ok) await loadDevices();
-  } catch (e) { /* ignore */ }
-  if (card) card.classList.remove('busy');
-}
-
-function initDevicesToggle() {
-  const toggle = document.getElementById('devices-toggle');
-  const list = document.getElementById('devices-list');
-  if (!toggle || !list || toggle.dataset.bound) return;
-  toggle.dataset.bound = '1';
-  toggle.addEventListener('click', () => {
-    const open = toggle.getAttribute('aria-expanded') !== 'true';
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    list.hidden = !open;
-  });
-}
-
-async function loadDevices() {
-  try {
-    const resp = await fetch((window.API_BASE || '') + '/devices', {
-      credentials: 'same-origin',
-      headers: authHeaders(),
-    });
-    if (!resp.ok) return; // 401/404: stay hidden
-    window._DEVICES = await resp.json();
-    window.renderDevices();
-  } catch (e) { /* network error: stay hidden */ }
 }
 
 async function startRecording(target, card) {
@@ -1170,7 +936,6 @@ async function persistRoomOrder() {
     } else {
       rebuildRoomGrid(rooms);
     }
-    if (typeof window.renderDevices === 'function' && window._DEVICES) window.renderDevices();
   } catch (err) {
     console.error('persistRoomOrder:', err);
     setRoomsMsg(I18N.t('roomsSaveFail'));
@@ -1214,8 +979,8 @@ window.renderRoomsSettings = function () {
     const entityClass = player || !entityId ? 'rooms-row-entity' : 'rooms-row-entity rooms-row-entity-missing';
     info.appendChild(el('div', entityClass, player ? playerLabel(player) : (entityId ? playerMissingLabel(entityId) : '')));
     const actions = el('div', 'rooms-row-actions');
-    actions.appendChild(deviceActionButton(I18N.t('roomsEdit'), '', () => openRoomForm(key)));
-    actions.appendChild(deviceActionButton(I18N.t('roomsDelete'), 'danger', () => deleteRoom(key)));
+    actions.appendChild(roomActionButton(I18N.t('roomsEdit'), '', () => openRoomForm(key)));
+    actions.appendChild(roomActionButton(I18N.t('roomsDelete'), 'danger', () => deleteRoom(key)));
     row.appendChild(info);
     row.appendChild(actions);
     if (keys.length > 1) bindRoomReorder(row);
@@ -1813,15 +1578,12 @@ window.updateChimeStatusUI = updateChimeStatusUI;
   }
 })();
 
-loadRooms().then(() => { pollSpeakerStatus(); loadDevices(); });
+loadRooms().then(() => { pollSpeakerStatus(); });
 setInterval(pollSpeakerStatus, 30000);
-setInterval(refreshDevicesIfVisible, 10000);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  loadDevices();
   pollSpeakerStatus();
 });
-initDevicesToggle();
 initRoomsSettings();
 initChimeSettings();
 
